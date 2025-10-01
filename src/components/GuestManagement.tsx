@@ -119,126 +119,77 @@ const GuestManagement = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // Load guests from API with room mapping by hotel
+  // Load guests from API with reservation data
   const loadGuests = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await adminApi.getAllGuests();
-      const guestsRaw: any[] = Array.isArray(response) ? response : (response?.data || []);
-  
-      // Collect unique hotel_ids
-      const uniqueHotelIds = Array.from(
-        new Set(
-          guestsRaw
-            .map((g) => g?.hotel_id)
-            .filter((v) => v !== undefined && v !== null)
-        )
-      );
-  
-      // Fetch rooms for each hotel
-      const hotelIdToRooms: Record<string, string[]> = {};
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      // Fetch reservations, guests, and rooms in parallel
+      const [reservationsData, guestsData, roomsData] = await Promise.all([
+        adminApi.getAllReservations(hotelId),
+        adminApi.getAllGuests(hotelId),
+        adminApi.getAllRooms(hotelId)
+      ]);
 
-      // Fetch rooms for each hotel
-      const roomsResults = await Promise.all(
-        uniqueHotelIds.map(async (hid) => {
-          try {
-            const rooms = await adminApi.getAllRooms(hid);
-            const roomNumbers = (rooms || []).map((r: any) => r?.room_number || r?.roomNumber);
-            // Shuffle rooms (optional) to avoid always picking the first
-            return { hid, roomNumbers };
-          } catch (e) {
-            return { hid, roomNumbers: [] };
-          }
-        })
-      );
-      roomsResults.forEach(({ hid, roomNumbers }) => {
-        hotelIdToRooms[hid] = [...roomNumbers]; // copy array
+      const guests = Array.isArray(guestsData) ? guestsData : (guestsData as any)?.data || [];
+      const rooms = Array.isArray(roomsData) ? roomsData : (roomsData as any)?.data || [];
+      const reservations = Array.isArray(reservationsData) ? reservationsData : [];
+
+      // Create maps for quick lookup
+      const guestMap = new Map();
+      guests.forEach((guest: any) => {
+        const guestId = guest.guest_id || guest.id;
+        guestMap.set(guestId, guest);
       });
+
+      const roomMap = new Map();
+      rooms.forEach((room: any) => {
+        const roomId = room.id || room.room_id;
+        roomMap.set(roomId, room);
+      });
+
+      // Create reservation map for quick lookup
+      const reservationMap = new Map();
+      const seenReservations = new Set<string>();
       
-      // Assign room numbers uniquely
-      const hotelAssignedRooms: Record<string, Set<string>> = {};
-      
-      console.log('🔍 Guests Response:', response);
-      console.log('🔍 Guests Raw:', guestsRaw);
-      
-      // Fetch reservations from PynBooking API
-      let reservationsRaw: any[] = [];
-      try {
-        const reservationsResponse = await fetch(`${process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001'}/api/pynbooking/reservations`, {
-          headers: { 
-            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-            'ngrok-skip-browser-warning': 'true'
-          }
-        });
-        if (reservationsResponse.ok) {
-          const resData = await reservationsResponse.json();
-          reservationsRaw = Array.isArray(resData) ? resData : (resData?.data || []);
-          console.log('🔍 PynBooking Reservations:', reservationsRaw);
-        }
-      } catch (e) {
-        console.log('PynBooking reservations API error:', e);
-      }
-      
-      // Create guest-to-room mapping from reservations
-      const guestRoomMap = new Map();
-      reservationsRaw.forEach((res: any) => {
-        const guestId = res?.guest_id || res?.guestId;
-        const roomId = res?.room_id || res?.roomId;
-        const roomNumber = res?.room_number || res?.roomNumber;
-        if (guestId && (roomId || roomNumber)) {
-          guestRoomMap.set(String(guestId), roomNumber || roomId);
+      reservations.forEach((reservation: any) => {
+        const guestId = reservation.guest_id;
+        const roomId = reservation.room_id;
+        const dedupeKey = `${guestId}-${roomId}`;
+        
+        if (!seenReservations.has(dedupeKey) && guestId && guestMap.has(guestId)) {
+          seenReservations.add(dedupeKey);
+          const room = roomMap.get(roomId);
+          const roomNumber = room?.room_number || room?.roomNumber || room?.number;
+          
+          reservationMap.set(guestId, {
+            room_number: roomNumber,
+            check_in_time: reservation.check_in_time || reservation.check_in,
+            check_out_time: reservation.check_out_time || reservation.check_out,
+            is_checked_in: reservation.is_checked_in || false,
+          });
         }
       });
-      
-      // Also check feedback data for room numbers as fallback
-      const feedbackRoomMap = new Map();
-      try {
-        const feedbackData = await adminApi.getAllFeedback();
-        const feedbackList = Array.isArray(feedbackData) ? feedbackData : [];
-        
-        // Sort by timestamp to get most recent feedback first
-        const sortedFeedback = feedbackList.sort((a: any, b: any) => {
-          const timeA = new Date(a?.submitted_time || 0).getTime();
-          const timeB = new Date(b?.submitted_time || 0).getTime();
-          return timeB - timeA; // Most recent first
-        });
-        
-        const usedRooms = new Set();
-        sortedFeedback.forEach((fb: any) => {
-          const guestName = fb?.guest_name?.toLowerCase().trim();
-          const roomNumber = fb?.room_number;
-          if (guestName && roomNumber && !usedRooms.has(roomNumber)) {
-            feedbackRoomMap.set(guestName, roomNumber);
-            usedRooms.add(roomNumber);
-          }
-        });
-      } catch (e) {
-        console.log('Could not fetch feedback for room mapping:', e);
-      }
-      
-      const transformedGuests: Guest[] = guestsRaw.map((g: any) => {
+
+      // Transform guests with reservation data
+      const transformedGuests: Guest[] = guests.map((g: any) => {
         const guestId = g?.guest_id || g?.id;
         const guestName = `${g?.first_name || ''} ${g?.last_name || ''}`.trim();
-        
-        // Try multiple sources for room number (priority order)
-        let roomNumber = guestRoomMap.get(String(guestId)) || // Reservations first
-                        g?.room_number || 
-                        g?.roomNumber || 
-                        feedbackRoomMap.get(guestName.toLowerCase()) || // Feedback fallback
-                        'N/A';
-        
-        console.log(`🔍 Guest ${guestName} (ID: ${guestId}) -> Room: ${roomNumber}`);
+        const reservationData = reservationMap.get(guestId);
         
         return {
           id: guestId || `${g?.email || ''}`,
           name: guestName || 'Guest',
           email: g?.email || '-',
           phone: g?.phone || '-',
-          roomNumber: roomNumber,
-          checkIn: g?.check_in || g?.checkIn || '',
-          checkOut: g?.check_out || g?.checkOut || '',
-          status: g?.status || 'pending',
+          roomNumber: reservationData?.room_number || 'N/A',
+          checkIn: reservationData?.check_in_time || '',
+          checkOut: reservationData?.check_out_time || '',
+          status: reservationData?.is_checked_in ? 'checked-in' : (reservationData ? 'pending' : 'pending'),
           address: g?.address || 'N/A',
           specialRequests: g?.specialRequests || [],
           lastActivity: g?.lastActivity || 'Just now',
@@ -315,13 +266,17 @@ const getStatusBadge = (status: string) => {
     setError(null);
 
     try {
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
       const payload: CreateGuestPayload = {
         first_name: newGuestForm.first_name,
         last_name: newGuestForm.last_name,
         email: newGuestForm.email,
         phone: newGuestForm.phone,
         language: newGuestForm.language,
-        hotel_id: newGuestForm.hotel_id || 'default-hotel-id', // You might want to get this from context
+        hotel_id: hotelId || newGuestForm.hotel_id || 'default-hotel-id',
       };
 
       const response = await adminApi.createGuest(payload);

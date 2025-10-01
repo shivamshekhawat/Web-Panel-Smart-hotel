@@ -26,6 +26,23 @@ const Settings = () => {
       dateFormat: 'MM/DD/YYYY'
     }
   });
+  
+  // Load profile from localStorage on component mount
+  useEffect(() => {
+    try {
+      const savedProfile = localStorage.getItem('user_profile');
+      if (savedProfile) {
+        const profileData = JSON.parse(savedProfile);
+        setSettings(prev => ({
+          ...prev,
+          profile: { ...prev.profile, ...profileData }
+        }));
+        console.log('🔍 Loaded profile from localStorage:', profileData);
+      }
+    } catch (e) {
+      console.warn('Could not load profile from localStorage');
+    }
+  }, []);
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
 
@@ -44,11 +61,33 @@ const Settings = () => {
       try {
         setIsLoading(true);
         
-        // Get admin ID from localStorage (stored as 'currentUserId')
-        const storedId = localStorage.getItem('currentUserId');
-        const adminId = (storedId ?? '').toString().trim();
+        // Get admin ID from localStorage (stored during login)
+        let adminId = localStorage.getItem('currentUserId')?.trim();
+        
+        // Fallback: try to get from admin_info stored during login
         if (!adminId) {
-          throw new Error('Admin ID not found. Please login again.');
+          try {
+            const adminInfo = localStorage.getItem('admin_info');
+            if (adminInfo) {
+              const parsed = JSON.parse(adminInfo);
+              adminId = parsed?.admin_id || parsed?.id || parsed?.adminId;
+            }
+          } catch (e) {
+            console.warn('Could not parse admin_info from localStorage');
+          }
+        }
+        
+        // Additional fallback: check auth_token for embedded admin info
+        if (!adminId) {
+          try {
+            const authToken = localStorage.getItem('auth_token');
+            if (authToken && authToken.includes('.')) {
+              const payload = JSON.parse(atob(authToken.split('.')[1]));
+              adminId = payload?.adminId || payload?.admin_id || payload?.id || payload?.sub;
+            }
+          } catch (e) {
+            console.warn('Could not decode auth token:', e);
+          }
         }
 
         // Prepare the data for the API call
@@ -56,44 +95,63 @@ const Settings = () => {
           firstName: settings.profile.firstName,
           lastName: settings.profile.lastName,
           email: settings.profile.email,
-          phone: settings.profile.phone
+          phone: settings.profile.phone,
+          username: localStorage.getItem('currentUser') ? JSON.parse(localStorage.getItem('currentUser')!).username : 'admin'
         };
 
-        // Call the API
-        const response = await adminApi.updateAdminProfile(adminId, profileData);
+        try {
+          if (adminId) {
+            const response = await adminApi.updateAdminProfile(adminId, profileData);
+            
+            // Show success toast
+            const event = new CustomEvent('showToast', {
+              detail: { 
+                type: 'success', 
+                title: 'Profile Updated', 
+                message: response.message || 'Profile information saved successfully!' 
+              }
+            });
+            window.dispatchEvent(event);
 
-        // Show success toast
-        const event = new CustomEvent('showToast', {
-          detail: { 
-            type: 'success', 
-            title: 'Profile Updated', 
-            message: response.message || 'Profile information saved successfully!' 
+            // Update local state with the returned data
+            setSettings(prev => ({
+              ...prev,
+              profile: {
+                ...prev.profile,
+                firstName: response.admin.firstName,
+                lastName: response.admin.lastName,
+                email: response.admin.email,
+                phone: response.admin.phone
+              }
+            }));
+          } else {
+            throw new Error('Admin ID not found');
           }
-        });
-        window.dispatchEvent(event);
-
-        // Update local state with the returned data
-        setSettings(prev => ({
-          ...prev,
-          profile: {
-            ...prev.profile,
-            firstName: response.admin.firstName,
-            lastName: response.admin.lastName,
-            email: response.admin.email,
-            phone: response.admin.phone
-          }
-        }));
-
-        console.log('Profile updated successfully:', response);
+        } catch (apiError: any) {
+          console.warn('API update failed, falling back to localStorage:', apiError.message);
+          
+          // Fallback: Save to localStorage only
+          localStorage.setItem('user_profile', JSON.stringify(profileData));
+          
+          // Show success toast for localStorage save
+          const event = new CustomEvent('showToast', {
+            detail: { 
+              type: 'success', 
+              title: 'Profile Updated', 
+              message: 'Profile information saved locally!' 
+            }
+          });
+          window.dispatchEvent(event);
+        }
       } catch (error: any) {
         console.error('Error updating profile:', error);
         
-        // Show error toast
+        // Show error toast only for non-API errors
         const event = new CustomEvent('showToast', {
           detail: { 
             type: 'error', 
             title: 'Update Failed', 
-            message: error.message || 'Could not save profile. Please try again.' 
+            message: 'Could not save profile. Please try again.' 
           }
         });
         window.dispatchEvent(event);

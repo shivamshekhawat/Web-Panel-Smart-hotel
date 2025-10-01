@@ -10,7 +10,7 @@ import {
 import { Button } from "./ui/button";
 import { Users, Bed, Bell, Clock, Settings, Building2 } from "lucide-react";
 import adminApi, { DashboardData } from '../services/api';
-import pynBookingApi from '../services/pynBookingApi';
+
 import { Badge } from "./ui/badge";
 
 interface HotelRecord {
@@ -94,7 +94,7 @@ const Dashboard = () => {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reservationsCount, setReservationsCount] = useState(0);
+
 
 
   // Load selected hotel from localStorage
@@ -117,16 +117,12 @@ const Dashboard = () => {
       setLoading(true);
       setError(null);
       try {
-        // Fetch PynBooking reservations count
-        try {
-          const reservations = await pynBookingApi.getAllReservations();
-          setReservationsCount(reservations.length);
-        } catch (pynError) {
-          console.log('PynBooking API not available:', pynError);
-          setReservationsCount(0);
-        }
+
         const res = await adminApi.getDashboard(selectedHotel.hotel_id);
-        console.log("Raw API Response:", res);
+        console.log("🔍 Dashboard API Response:", res);
+        console.log("🔍 Selected Hotel ID:", selectedHotel.hotel_id);
+        console.log("🔍 Response type:", typeof res);
+        console.log("🔍 Response keys:", res ? Object.keys(res) : 'null response');
         
         let dashboard: DashboardData | null = null;
         // Build a fallback map from feedback: room_number -> latest guest_name
@@ -422,9 +418,14 @@ const Dashboard = () => {
           }
         }
         if (dashboard) {
+          console.log("🔍 Final dashboard data being set:", dashboard);
+          console.log("🔍 Dashboard stats:", dashboard.stats);
+          console.log("🔍 Dashboard liveRoomStatus:", dashboard.liveRoomStatus);
+          console.log("🔍 Dashboard notifications:", dashboard.notifications);
           setDashboardData(dashboard);
         } else {
-          setError(res.message || 'Failed to load dashboard data');
+          console.log("🔍 No dashboard data found, setting error");
+          setError(res?.message || 'Failed to load dashboard data');
         }
       } catch (err: any) {
         setError(err.message || 'Failed to load dashboard data');
@@ -433,8 +434,20 @@ const Dashboard = () => {
       }
     };
     fetchDashboard();
-    interval = setInterval(fetchDashboard, 100000); // Refresh every 10 seconds
-    return () => clearInterval(interval);
+    interval = setInterval(fetchDashboard, 30000); // Refresh every 30 seconds
+    
+    // Listen for reservation updates
+    const handleReservationUpdate = () => {
+      console.log('🔄 Reservation update detected, refreshing dashboard...');
+      fetchDashboard();
+    };
+    
+    window.addEventListener('reservationUpdated', handleReservationUpdate);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('reservationUpdated', handleReservationUpdate);
+    };
   }, [selectedHotel]);
 
 
@@ -446,15 +459,89 @@ const Dashboard = () => {
     { value: "-", label: "Guest Feedback", href: selectedHotel ? `/hotel/${selectedHotel.hotel_id}/feedback` : "/feedback" },
   ];
  
-  console.log("Dashboard data set:", dashboardData);
+  console.log("🔍 Dashboard data in render:", dashboardData);
+  console.log("🔍 Dashboard stats being used:", dashboardStats);
+  console.log("🔍 Live room status:", dashboardData?.liveRoomStatus);
+  console.log("🔍 Notifications:", dashboardData?.notifications);
 
   const liveRoomStatus = dashboardData?.liveRoomStatus || [];
   const notifications = dashboardData?.notifications || [];
 
   const [filters, setFilters] = useState({ floor: "", room: "", status: "" });
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleManualRefresh = async () => {
+    if (!selectedHotel || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const res = await adminApi.getDashboard(selectedHotel.hotel_id);
+      // Process the response similar to the useEffect logic
+      let dashboard: DashboardData | null = null;
+      let latestGuestByRoom: Record<string, string> = {};
+      
+      try {
+        const feedbackApiList = await adminApi.getAllFeedback();
+        if (Array.isArray(feedbackApiList)) {
+          const sorted = [...feedbackApiList].sort((a: any, b: any) => {
+            const ta = new Date(a.submitted_time || a.created_at || 0).getTime();
+            const tb = new Date(b.submitted_time || b.created_at || 0).getTime();
+            return tb - ta;
+          });
+          for (const fb of sorted) {
+            const rn = String(fb.room_number || '').trim();
+            const gn = String(fb.guest_name || '').trim();
+            if (rn && gn && !latestGuestByRoom[rn]) {
+              latestGuestByRoom[rn] = gn;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch feedback for guest fallback:', e);
+      }
+      
+      if (res && typeof res === "object" && res !== null && "hotel" in res && "rooms" in res) {
+        const r = res as Record<string, any>;
+        const rooms = Array.isArray(r.rooms) ? r.rooms : [];
+        const roomServices = Array.isArray(r.roomServices) ? r.roomServices : [];
+        const technicalIssues = Array.isArray(r.technicalIssues) ? r.technicalIssues : [];
+        const feedback = Array.isArray(r.feedback) ? r.feedback : [];
+        const rawNotifications = Array.isArray(r.notifications) ? r.notifications : [];
+        
+        dashboard = {
+          stats: [
+            { value: rooms.length, label: "Total Rooms", href: `/hotel/${selectedHotel.hotel_id}/rooms` },
+            { value: roomServices.length, label: "Clean Requests", href: `/hotel/${selectedHotel.hotel_id}/clean-requests` },
+            { value: technicalIssues.length, label: "Technical Issues", href: `/hotel/${selectedHotel.hotel_id}/technical-issues` },
+            { value: feedback.length, label: "Guest Feedback", href: `/hotel/${selectedHotel.hotel_id}/feedback` },
+          ],
+          liveRoomStatus: rooms.map((room: any) => {
+            const roomNo = room.room_number || room.roomNumber || room.number || "-";
+            const fallbackGuest = latestGuestByRoom[String(roomNo).trim()] || "-";
+            return {
+              room: roomNo,
+              floor: room.floor || room.floorNumber || room.floor_number || "-",
+              guest: room.guest_name || room.guest_full_name || room.guestName || fallbackGuest || "-",
+              mode: room.status || room.room_status || room.mode || "Idle",
+              lastAction: room.last_action || room.last_action_time || room.updated_at || "-",
+              tabletStatus: room.tablet_status || room.tabletStatus || "Active",
+            };
+          }),
+          notifications: [],
+        };
+      }
+      
+      if (dashboard) {
+        setDashboardData(dashboard);
+      }
+    } catch (err: any) {
+      console.error('Manual refresh failed:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const filteredRooms = liveRoomStatus.filter((r) => {
@@ -550,6 +637,8 @@ const Dashboard = () => {
                 <CardTitle className="text-xl font-semibold">Live Room Status</CardTitle>
                 <CardDescription>Current status of all rooms</CardDescription>
               </div>
+              
+
 
               {/* Filters */}
               <div className="flex flex-wrap gap-2">

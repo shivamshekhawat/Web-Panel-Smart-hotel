@@ -21,6 +21,7 @@ const ConfigureDisplay = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<LanguageData[]>([]);
+  const [rooms, setRooms] = useState<Array<{id: string, number: string}>>([]);
 
   useEffect(() => {
     if (!supportedLanguages.includes(defaultLanguage)) {
@@ -33,12 +34,19 @@ const ConfigureDisplay = () => {
     setIsLoading(true);
     setError(null);
     try {
+      console.log('🔍 Loading languages from API...');
       const response = await adminApi.getAllLanguages();
+      console.log('🔍 Languages API response:', response);
+      
       const languagesData = Array.isArray(response) ? response : response.data || [];
+      console.log('🔍 Languages data:', languagesData);
+      
       setAvailableLanguages(languagesData);
       
       // Update supported languages with API data
       const languageNames = languagesData.map((lang: LanguageData) => lang.language_name);
+      console.log('🔍 Language names:', languageNames);
+      
       if (languageNames.length > 0) {
         setSupportedLanguages(languageNames);
         if (!languageNames.includes(defaultLanguage)) {
@@ -46,7 +54,7 @@ const ConfigureDisplay = () => {
         }
       }
     } catch (err) {
-      console.error('Error loading languages:', err);
+      console.error('🔴 Error loading languages:', err);
       setError('Failed to load languages. Using default languages.');
       // Keep using default languages as fallback
     } finally {
@@ -54,9 +62,35 @@ const ConfigureDisplay = () => {
     }
   };
 
-  // Load languages on component mount
+  // Load rooms from API
+  const loadRooms = async () => {
+    try {
+      console.log('🔍 Loading rooms for Configure Display...');
+      
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      const list = await adminApi.getAllRooms(hotelId);
+      console.log('🔍 Rooms loaded:', list);
+
+      const transformedRooms = (Array.isArray(list) ? list : []).map((room: any) => ({
+        id: room.id ?? room.room_id ?? '',
+        number: room.room_number ?? String(room.number ?? ''),
+      }));
+      
+      console.log('🔍 Transformed rooms:', transformedRooms);
+      setRooms(transformedRooms);
+    } catch (err) {
+      console.error('Error loading rooms:', err);
+      setRooms([]);
+    }
+  };
+
+  // Load languages and rooms on component mount
   useEffect(() => {
     loadLanguages();
+    loadRooms();
   }, []);
 
   const handleAddLanguage = async () => {
@@ -78,7 +112,9 @@ const ConfigureDisplay = () => {
         language_name: val,
       };
 
+      console.log('🔍 Creating language with payload:', payload);
       const response = await adminApi.createLanguage(payload);
+      console.log('🔍 Create language response:', response);
       
       if (response.success) {
         // Reload languages from API
@@ -95,7 +131,7 @@ const ConfigureDisplay = () => {
         window.dispatchEvent(event);
       }
     } catch (err: any) {
-      console.error('Error creating language:', err);
+      console.error('🔴 Error creating language:', err);
       let message = 'Failed to add language';
       
       if (err instanceof ApiError) {
@@ -148,13 +184,18 @@ const ConfigureDisplay = () => {
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col">
               <label className="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200">Room Number</label>
-              <input
-                type="text"
-                placeholder="e.g., 101"
+              <select
                 className="border dark:border-gray-600 rounded-md px-3 py-2 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-gray-200 focus:ring-1 focus:ring-blue-400 outline-none"
                 value={roomNumber}
                 onChange={(e) => setRoomNumber(e.target.value)}
-              />
+              >
+                <option value="">Select Room</option>
+                {rooms.map(room => (
+                  <option key={room.id} value={room.number}>
+                    Room {room.number}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex flex-col">
@@ -241,22 +282,38 @@ const ConfigureDisplay = () => {
                 // Try to resolve room ID from the entered room number for safer API call
                 let roomIdForApi: string | number = roomNumber;
                 try {
-                  const allRooms = await adminApi.getAllRooms();
+                  console.log('🔍 Fetching all rooms to resolve room ID...');
+                  
+                  // Get selected hotel ID
+                  const selectedHotel = localStorage.getItem('selected_hotel');
+                  const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+                  
+                  const allRooms = await adminApi.getAllRooms(hotelId);
+                  console.log('🔍 All rooms:', allRooms);
+                  
                   const match = Array.isArray(allRooms)
                     ? allRooms.find((r: any) => String(r?.room_number || r?.roomNumber) === String(roomNumber))
                     : null;
+                  console.log('🔍 Room match for number', roomNumber, ':', match);
+                  
                   if (match?.id) {
                     roomIdForApi = match.id;
+                    console.log('🔍 Using room ID:', roomIdForApi);
                   }
                 } catch (e) {
                   // If room list fetch fails, fall back to using entered value
-                  console.warn('Could not resolve room ID from number, using entered value');
+                  console.warn('🔴 Could not resolve room ID from number, using entered value:', e);
                 }
 
-                const res: any = await adminApi.updateRoomGreeting(roomIdForApi, {
+                console.log('🔍 Updating room greeting for room:', roomIdForApi);
+                const greetingPayload = {
                   language: languageCode,
                   message: welcomeMessage.trim(),
-                });
+                };
+                console.log('🔍 Greeting payload:', greetingPayload);
+                
+                const res: any = await adminApi.updateRoomGreeting(roomIdForApi, greetingPayload);
+                console.log('🔍 Update greeting response:', res);
                 const event = new CustomEvent('showToast', {
                   detail: { 
                     type: 'success', 
@@ -265,6 +322,11 @@ const ConfigureDisplay = () => {
                   }
                 });
                 window.dispatchEvent(event);
+                
+                // Clear form fields after successful save
+                setRoomNumber('');
+                setWelcomeMessage('');
+                
                 // Emit refresh event so any open room dashboard can refetch immediately
                 const refreshEvt = new CustomEvent('refreshRoomDashboard', {
                   detail: {

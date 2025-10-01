@@ -10,6 +10,11 @@ if (!API_BASE_URL || API_BASE_URL === 'undefined') {
 }
 
 console.log('🔗 Current API_BASE_URL:', API_BASE_URL);
+console.log('🔍 Environment check:', {
+  NODE_ENV: process.env.NODE_ENV,
+  REACT_APP_API_BASE_URL: process.env.REACT_APP_API_BASE_URL,
+  resolvedUrl: API_BASE_URL
+});
 
 // Storage keys
 const AUTH_TOKEN_KEY = 'auth_token';
@@ -50,14 +55,25 @@ export interface CreateHotelPayload {
   City: string;
   Country: string;
   Postal_code: string;
-  UserName: string;
-  Password: string;
+  UserName?: string;
+  Password?: string;
 }
 
 export interface CreateHotelResponse {
   success?: boolean;
   message?: string;
   data?: Record<string, any>;
+  hotel?: {
+    hotel_id: number;
+    name: string;
+    logo_url: string;
+    established_year: number;
+    address: string;
+    service_care_no: string;
+    city: string;
+    country: string;
+    postal_code: string;
+  };
   c?: string[]; // Validation errors array
   r?: any[]; // Additional response data
   m?: any[]; // Additional messages
@@ -65,6 +81,7 @@ export interface CreateHotelResponse {
 
 export interface HotelData {
   id: string;
+  hotel_id?: number;
   name: string;
   logo_url: string;
   established_year: number;
@@ -121,6 +138,15 @@ export interface UpdateAdminProfileResponse {
     email: string;
     phone: string;
   };
+}
+
+export interface UpdateHotelPasswordPayload {
+  newPassword: string;
+}
+
+export interface UpdateHotelPasswordResponse {
+  success: boolean;
+  message: string;
 }
 
 // Room-related interfaces
@@ -304,14 +330,18 @@ export interface FeedbackApiItem {
 
 // -------- Helpers --------
 const getAuthToken = (): string | null => {
-  try {
-    const raw = localStorage.getItem(AUTH_TOKEN_KEY);
-    if (!raw) return null;
-    const trimmed = raw.trim();
-    return trimmed && trimmed !== 'undefined' && trimmed !== 'null' ? trimmed : null;
-  } catch {
+  const raw = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!raw || raw === 'undefined' || raw === 'null') {
+    console.log('🔐 No auth token found in localStorage');
     return null;
   }
+  const token = raw.trim();
+  if (!token) {
+    console.log('🔐 Empty auth token found in localStorage');
+    return null;
+  }
+  console.log('🔐 Auth token found:', token.substring(0, 20) + '...');
+  return token;
 };
 
 const setAuth = (token: string, info: AdminInfo): void => {
@@ -327,44 +357,75 @@ const clearAuth = (): void => {
 const buildHeaders = (withAuth: boolean = true): HeadersInit => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'ngrok-skip-browser-warning': 'true', // Enable this to skip ngrok browser warning
+    'ngrok-skip-browser-warning': 'true',
   };
 
   if (withAuth) {
     const token = getAuthToken();
-    if (!token) throw new Error('Token missing. Please login again.');
+    if (!token) {
+      console.error('🔐 No auth token found in localStorage');
+      throw new Error('Authentication required. Please login again.');
+    }
+    console.log('🔐 Using auth token:', token.substring(0, 20) + '...');
     headers['Authorization'] = `Bearer ${token}`;
   }
 
   return headers;
 };
 
+
+
 const handleResponse = async <T>(response: Response, defaultError: string): Promise<T> => {
+  // Log response details for debugging
+  console.log(`🔍 Response Status: ${response.status} ${response.statusText}`);
+  console.log(`🔍 Response Headers:`, Object.fromEntries(response.headers.entries()));
+  
   if (!response.ok) {
     // Check if response is HTML (common when API is down or misconfigured)
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('text/html')) {
-      throw new ApiError(response.status, 'Server returned HTML instead of JSON. Please check if the API server is running and accessible.');
+      const htmlText = await response.text().catch(() => 'Unable to read HTML response');
+      console.log(`🔍 HTML Response (first 200 chars):`, htmlText.substring(0, 200));
+      throw new ApiError(response.status, 'Server returned HTML instead of JSON. This usually means the endpoint doesn\'t exist or the server is misconfigured.');
     }
 
-    const errorData = await response.json().catch(() => ({}));
-    throw new ApiError(response.status, errorData.message || defaultError);
+    let errorData: any = {};
+    try {
+      const errorText = await response.text();
+      if (errorText.trim()) {
+        errorData = JSON.parse(errorText);
+      }
+    } catch (parseError) {
+      console.log(`🔍 Could not parse error response as JSON:`, parseError);
+    }
+    
+    const errorMessage = errorData.message || errorData.error || defaultError;
+    console.log(`🔍 API Error:`, errorMessage);
+    throw new ApiError(response.status, errorMessage);
   }
 
   // Check if response is HTML even when status is OK
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
-    throw new ApiError(200, 'Server returned HTML instead of JSON. Please check if the API server is running and accessible.');
+    const htmlText = await response.text().catch(() => 'Unable to read HTML response');
+    console.log(`🔍 HTML Response (first 200 chars):`, htmlText.substring(0, 200));
+    throw new ApiError(200, 'Server returned HTML instead of JSON. This usually means the endpoint doesn\'t exist or the server is misconfigured.');
   }
 
   // Try to parse JSON, but handle empty responses gracefully
   try {
     const text = await response.text();
+    console.log(`🔍 Response Text (first 200 chars):`, text.substring(0, 200));
+    
     if (!text || text.trim() === '') {
       throw new ApiError(200, 'Server returned empty response. Please check if the API server is running and accessible.');
     }
-    return JSON.parse(text);
+    
+    const parsed = JSON.parse(text);
+    console.log(`🔍 Parsed Response:`, parsed);
+    return parsed;
   } catch (parseError: any) {
+    console.log(`🔍 JSON Parse Error:`, parseError);
     if (parseError instanceof SyntaxError) {
       throw new ApiError(200, 'Server returned invalid JSON. Please check if the API server is running and accessible.');
     }
@@ -400,56 +461,192 @@ export class ApiError extends Error {
 export const adminApi = {
   getToken: getAuthToken,
   clearToken: clearAuth,
-
-  // Admin Signup
-  async signUp(adminData: AdminSignUpData): Promise<AdminSignUpResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/admins`, {
-      method: 'POST',
-      headers: buildHeaders(false),
-      body: JSON.stringify(adminData),
-    });
-    return handleResponse<AdminSignUpResponse>(response, 'Signup failed');
+  
+  // Validate current token
+  async validateToken(): Promise<boolean> {
+    try {
+      const token = getAuthToken();
+      if (!token) return false;
+      
+      // Try multiple endpoints to validate token
+      const endpoints = [
+        '/api/admin/hotels',
+        '/api/hotels/',
+        '/api/admin/profile'
+      ];
+      
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            method: 'GET',
+            headers: buildHeaders(true),
+          });
+          
+          if (response.status !== 401) {
+            console.log('🔐 Token validated successfully with endpoint:', endpoint);
+            return true;
+          }
+        } catch (endpointError) {
+          console.log('🔐 Endpoint', endpoint, 'failed:', endpointError);
+          continue;
+        }
+      }
+      
+      console.log('🔐 All validation endpoints returned 401');
+      return false;
+    } catch (error) {
+      console.error('🔐 Token validation failed:', error);
+      return false;
+    }
   },
 
-  // Admin Login
-  async login(credentials: LoginCredentials): Promise<AdminLoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/admins/login`, {
-      method: 'POST',
-      headers: buildHeaders(false),
-      body: JSON.stringify(credentials),
-    });
+  // Admin Signup - Try multiple endpoint variations
+  async signUp(adminData: AdminSignUpData): Promise<AdminSignUpResponse> {
+    const endpoints = [
+      '/api/admin',        // Try singular form first
+      '/api/admins',       // Original plural form
+      '/api/admin/signup', // Alternative signup endpoint
+      '/api/auth/signup'   // Auth-based signup
+    ];
 
-    const data: any = await handleResponse<AdminLoginResponse>(response, 'Login failed');
-    console.log("Login API Response:", data);
+    let lastError: Error | null = null;
+    
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`🔍 Trying admin signup endpoint: ${API_BASE_URL}${endpoint}`);
+        
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: buildHeaders(false),
+          body: JSON.stringify(adminData),
+        });
 
-    const token = extractToken(data, response);
-    console.log("Extracted token:", token);
+        // If we get a 404, try the next endpoint
+        if (response.status === 404) {
+          console.log(`❌ Endpoint ${endpoint} returned 404, trying next...`);
+          continue;
+        }
 
-    if (!token) {
-      throw new ApiError(401, 'Token not found in login response');
+        // If we get HTML response, try the next endpoint
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.log(`❌ Endpoint ${endpoint} returned HTML, trying next...`);
+          continue;
+        }
+
+        // If we get here, we have a valid response (success or error)
+        console.log(`✅ Found working endpoint: ${endpoint} (Status: ${response.status})`);
+        return handleResponse<AdminSignUpResponse>(response, 'Signup failed');
+        
+      } catch (error: any) {
+        console.log(`❌ Error with endpoint ${endpoint}:`, error.message);
+        lastError = error;
+        continue;
+      }
     }
 
-    const info: AdminInfo = {
-      username: data.admin.username,
-      email: data.admin.email,
-      session_id: data.session_id,
-    };
+    // If all endpoints failed, throw the last error or a generic one
+    throw new ApiError(404, 
+      lastError?.message || 
+      'Admin signup endpoint not found. Please check if the API server is running and the correct endpoint is configured.'
+    );
+  },
 
-    setAuth(token, info);
-    // Persist admin id for profile updates if backend returns it
-    try {
-      const adminId =
-        data?.data?.admin_id ||
-        data?.data?.adminId ||
-        data?.admin?.admin_id ||
-        data?.admin?.id ||
-        data?.admin_id ||
-        data?.id;
-      if (adminId !== undefined && adminId !== null && String(adminId).trim() !== '') {
-        localStorage.setItem('currentUserId', String(adminId).trim());
+  // Admin Login - Try multiple endpoint variations
+  async login(credentials: LoginCredentials): Promise<AdminLoginResponse> {
+    const endpoints = [
+      '/api/admin/login',    // Try singular form first
+      '/api/admins/login',   // Original plural form
+      '/api/auth/login'      // Auth-based login
+    ];
+
+    let lastError: Error | null = null;
+    
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`🔍 Trying admin login endpoint: ${API_BASE_URL}${endpoint}`);
+        
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: buildHeaders(false),
+          body: JSON.stringify(credentials),
+        });
+
+        // If we get a 404, try the next endpoint
+        if (response.status === 404) {
+          console.log(`❌ Endpoint ${endpoint} returned 404, trying next...`);
+          continue;
+        }
+
+        // If we get HTML response, try the next endpoint
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.log(`❌ Endpoint ${endpoint} returned HTML, trying next...`);
+          continue;
+        }
+
+        // If we get here, we have a valid response (success or error)
+        console.log(`✅ Found working endpoint: ${endpoint} (Status: ${response.status})`);
+        
+        const data: any = await handleResponse<AdminLoginResponse>(response, 'Login failed');
+        console.log('🔍 Login API Response:', data);
+        console.log('🔍 Admin object from response:', data?.admin);
+
+        const token = extractToken(data, response);
+        console.log("Extracted token:", token);
+
+        if (!token) {
+          throw new ApiError(401, 'Token not found in login response');
+        }
+
+        const info: AdminInfo = {
+          username: data.admin?.username || credentials.username,
+          email: data.admin?.email || '',
+          session_id: data.session_id || credentials.session_id,
+        };
+
+        setAuth(token, info);
+        // Persist admin id for profile updates if backend returns it
+        try {
+          const adminId =
+            data?.admin?.admin_id ||  // Most likely location based on AdminLoginResponse interface
+            data?.data?.admin_id ||
+            data?.data?.adminId ||
+            data?.admin?.id ||
+            data?.admin_id ||
+            data?.id;
+          
+          console.log('🔍 Extracting admin ID from login response:', {
+            'data.admin.admin_id': data?.admin?.admin_id,
+            'data.admin.id': data?.admin?.id,
+            'data.admin_id': data?.admin_id,
+            'extracted adminId': adminId
+          });
+          
+          if (adminId !== undefined && adminId !== null && String(adminId).trim() !== '') {
+            const adminIdStr = String(adminId).trim();
+            localStorage.setItem('currentUserId', adminIdStr);
+            console.log('🔍 Stored admin ID in localStorage:', adminIdStr);
+          } else {
+            console.warn('🔴 No valid admin ID found in login response');
+          }
+        } catch (e) {
+          console.error('🔴 Error extracting admin ID:', e);
+        }
+        return data as AdminLoginResponse;
+        
+      } catch (error: any) {
+        console.log(`❌ Error with endpoint ${endpoint}:`, error.message);
+        lastError = error;
+        continue;
       }
-    } catch {}
-    return data as AdminLoginResponse;
+    }
+
+    // If all endpoints failed, throw the last error or a generic one
+    throw new ApiError(404, 
+      lastError?.message || 
+      'Admin login endpoint not found. Please check if the API server is running and the correct endpoint is configured.'
+    );
   },
 
   // Update Admin Profile
@@ -474,24 +671,67 @@ export const adminApi = {
     }
   },
 
-  // Create Hotel (requires login)
   async createHotel(payload: CreateHotelPayload): Promise<CreateHotelResponse> {
-    console.log('Creating hotel with payload:', payload);
-    console.log('API URL:', `${API_BASE_URL}/api/hotels/signup`);
-
     try {
+      console.log('🏨 Creating hotel with payload:', payload);
+      console.log('🏨 Using token:', getAuthToken());
+      
       const response = await fetch(`${API_BASE_URL}/api/hotels/signup`, {
         method: 'POST',
         headers: buildHeaders(true),
         body: JSON.stringify(payload),
       });
 
-      const result = await handleResponse<CreateHotelResponse>(response, 'Create hotel failed');
-      console.log('Create hotel response:', result);
+      console.log('🏨 Create hotel response status:', response.status);
+      console.log('🏨 Create hotel response headers:', Object.fromEntries(response.headers.entries()));
+
+      if (response.status === 401) {
+        console.log('🏨 Token invalid, clearing auth and redirecting to login');
+        clearAuth();
+        throw new ApiError(401, 'Your session has expired. Please login again to create a hotel.');
+      }
+
+      if (response.status === 400) {
+        const errorData = await response.json().catch(() => ({}));
+        console.log('🏨 Bad request error:', errorData);
+        
+        // If it's a token error, the 2FA token might not be compatible
+        if (errorData.error === 'Invalid Token') {
+          throw new ApiError(400, 'The authentication token from 2FA login is not compatible with hotel creation. This is a backend compatibility issue.');
+        }
+        
+        throw new ApiError(400, errorData.message || 'Invalid hotel data provided.');
+      }
+
+      return handleResponse<CreateHotelResponse>(response, 'Create hotel failed');
+    } catch (error) {
+      console.error('🏨 Create hotel error:', error);
+      if (error instanceof Error && error.message.includes('Authentication required')) {
+        clearAuth();
+        throw new ApiError(401, 'Your session has expired. Please login again to create a hotel.');
+      }
+      throw error;
+    }
+  },
+
+  // Update Hotel Password (Admin Only)
+  async updateHotelPassword(hotelId: string | number, payload: UpdateHotelPasswordPayload): Promise<UpdateHotelPasswordResponse> {
+    console.log('Updating hotel password for hotel ID:', hotelId);
+    console.log('API URL:', `${API_BASE_URL}/api/admin/hotel/password/${hotelId}`);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/hotel/password/${hotelId}`, {
+        method: 'PUT',
+        headers: buildHeaders(true),
+        body: JSON.stringify(payload),
+      });
+
+      const result = await handleResponse<UpdateHotelPasswordResponse>(response, 'Update hotel password failed');
+      console.log('Update hotel password response:', result);
 
       return result;
     } catch (error) {
-      console.error('Create hotel API error:', error);
+      console.error('Update hotel password API error:', error);
       throw error;
     }
   },
@@ -512,9 +752,12 @@ export const adminApi = {
     // Handle both response formats: wrapped response or direct array
     const data = await handleResponse<any>(response, 'Failed to fetch hotels');
 
-    // If the response is already an array, return it directly
+    // If the response is already an array, normalize the data
     if (Array.isArray(data)) {
-      return data;
+      return data.map(hotel => ({
+        ...hotel,
+        id: hotel.id || hotel.hotel_id?.toString() || Date.now().toString()
+      }));
     }
 
     // Otherwise, return the wrapped response format
@@ -597,9 +840,9 @@ export const adminApi = {
   },
 
   // Get All Guests (requires login)
-  async getAllGuests(hotel_id?: string): Promise<GetAllGuestsResponse | GuestData[]> {
+  async getAllGuests(hotel_id?: string | number): Promise<GetAllGuestsResponse | GuestData[]> {
     const url = hotel_id
-      ? `${API_BASE_URL}/api/guests?hotel_id=${encodeURIComponent(hotel_id)}`
+      ? `${API_BASE_URL}/api/guests?hotel_id=${encodeURIComponent(String(hotel_id))}`
       : `${API_BASE_URL}/api/guests`;
     console.log('Fetching guests from:', url);
     const response = await fetch(url, {
@@ -753,27 +996,60 @@ export const adminApi = {
     return handleResponse(response, 'Failed to create reservation');
   },
 
-  /**
-   * Fetch dashboard data for a hotel
-   */
-  async getDashboard(hotelId: number): Promise<GetDashboardResponse> {
-    console.log(hotelId);
-    const url = `${API_BASE_URL}/api/hotels/dashboard/${hotelId}`;
+  // Get All Reservations
+  async getAllReservations(hotel_id?: string | number): Promise<any[]> {
+    const url = hotel_id
+      ? `${API_BASE_URL}/api/reservations?hotel_id=${encodeURIComponent(String(hotel_id))}`
+      : `${API_BASE_URL}/api/reservations/`;
+    
+    console.log('Fetching reservations from:', url);
     const response = await fetch(url, {
       method: 'GET',
       headers: buildHeaders(true),
     });
 
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      return [];
+    }
+
+    const data = await handleResponse<any>(response, 'Failed to fetch reservations');
+    return Array.isArray(data) ? data : data.data || data.response || [];
+  },
+
+  /**
+   * Fetch dashboard data for a hotel
+   */
+  async getDashboard(hotelId: number): Promise<GetDashboardResponse> {
+    console.log('🔍 getDashboard called with hotelId:', hotelId);
+    const url = `${API_BASE_URL}/api/hotels/dashboard/${hotelId}`;
+    console.log('🔍 Dashboard API URL:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(true),
+    });
+
+    console.log('🔍 Dashboard API response status:', response.status);
+    console.log('🔍 Dashboard API response headers:', Object.fromEntries(response.headers.entries()));
+
     // Handle empty responses gracefully for GET requests
     if (response.status === 204 || response.headers.get('content-length') === '0') {
+      console.log('🔍 Dashboard API returned empty response');
       return { success: true, message: 'No dashboard data available', data: undefined };
     }
 
-    return handleResponse<GetDashboardResponse>(response, 'Failed to fetch dashboard data');
+    const result = await handleResponse<GetDashboardResponse>(response, 'Failed to fetch dashboard data');
+    console.log('🔍 Dashboard API final result:', result);
+    return result;
   },
 
-  async getAllFeedback(): Promise<FeedbackApiItem[]> {
-    const response = await fetch(`${API_BASE_URL}/api/feedback`, {
+  async getAllFeedback(hotel_id?: string | number): Promise<FeedbackApiItem[]> {
+    const url = hotel_id
+      ? `${API_BASE_URL}/api/feedback?hotel_id=${encodeURIComponent(String(hotel_id))}`
+      : `${API_BASE_URL}/api/feedback`;
+    
+    console.log('Fetching feedback from:', url);
+    const response = await fetch(url, {
       method: 'GET',
       headers: buildHeaders(true),
     });
@@ -827,11 +1103,30 @@ export const adminApi = {
     return handleResponse(response, 'Failed to update room greeting');
   },
 
-  // Get Admin Hotels (using existing /api/hotels route)
+  // Get Admin Hotels - returns hotels for current admin
   async getAdminHotels(): Promise<HotelData[]> {
-    return this.getAllHotels().then(response => 
-      Array.isArray(response) ? response : response.data || []
-    );
+    console.log('🏨 Fetching admin-specific hotels...');
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/hotels`, {
+        method: 'GET',
+        headers: buildHeaders(true),
+      });
+
+      // Handle empty responses gracefully for GET requests
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return [];
+      }
+
+      const data = await handleResponse<any>(response, 'Failed to fetch admin hotels');
+      const hotels = Array.isArray(data) ? data : data.data || [];
+      console.log('🏨 Admin-specific hotels found:', hotels);
+      return hotels;
+      
+    } catch (error) {
+      console.error('🏨 Error fetching admin hotels:', error);
+      return [];
+    }
   },
 
   // Get Guests with Rooms
@@ -847,7 +1142,7 @@ export const adminApi = {
 
     const data = await handleResponse<any>(response, 'Failed to fetch guests with rooms');
     return Array.isArray(data) ? data : data.response || data.data || [];
-  },
+  }
 };
 
 export default adminApi;

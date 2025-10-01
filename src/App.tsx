@@ -17,6 +17,7 @@ import TechnicalIssues from './components/TechnicalIssues';
 import Reservations from './components/Reservations';
 import { ThemeProvider } from './lib/ThemeContext';
 import { adminApi } from './services/api';
+import { checkAdminHotels } from './services/hotelService';
 
 export interface User {
   username: string;
@@ -60,22 +61,25 @@ const App = () => {
           setIsAuthenticated(true);
           setCurrentUser(JSON.parse(storedUser));
           
-          // Fetch admin's hotels
+          // Check admin's hotels
           try {
-            const hotels = await adminApi.getAdminHotels();
-            if (hotels.length === 1) {
-              const hotel = hotels[0];
-              setHotelId(hotel.id);
-              localStorage.setItem('selected_hotel', JSON.stringify(hotel));
-              // Only navigate to dashboard if we're on root path
-              if (location.pathname === '/') {
-                navigate(`/hotel/${hotel.id}/dashboard`, { replace: true });
+            const hotelCheck = await checkAdminHotels();
+            console.log('🏨 Initial hotel check result:', hotelCheck);
+            
+            if (hotelCheck.hasHotel && hotelCheck.selectedHotel) {
+              setHotelId(hotelCheck.selectedHotel.id);
+              // Only navigate if we're on root path or sign-in path
+              if (location.pathname === '/' || location.pathname === '/sign-in') {
+                navigate(hotelCheck.redirectPath, { replace: true });
               }
-            } else if (hotels.length === 0) {
-              navigate('/create-hotel', { replace: true });
+            } else {
+              // No hotel found, redirect to create hotel if on root or sign-in
+              if (location.pathname === '/' || location.pathname === '/sign-in') {
+                navigate(hotelCheck.redirectPath, { replace: true });
+              }
             }
           } catch (error) {
-            console.error('Error fetching hotels:', error);
+            console.error('🏨 Error during initial hotel check:', error);
           }
         }
       } catch (error) {
@@ -89,6 +93,7 @@ const App = () => {
   }, [navigate]);
 
   const handleLogin = async (user: User) => {
+    console.log('🔐 Handling login for user:', user);
     setCurrentUser(user);
     setIsAuthenticated(true);
     localStorage.setItem('isAuthenticated', 'true');
@@ -98,26 +103,23 @@ const App = () => {
     setIsLoading(true);
     
     try {
-      console.log('Fetching admin hotels after login...');
-      const hotels = await adminApi.getAdminHotels();
-      console.log('Hotels found:', hotels);
+      console.log('🏨 Checking admin hotels after login...');
+      const hotelCheck = await checkAdminHotels();
+      console.log('🏨 Hotel check result:', hotelCheck);
       
-      if (hotels.length === 1) {
-        const hotel = hotels[0];
-        setHotelId(hotel.id);
-        localStorage.setItem('selected_hotel', JSON.stringify(hotel));
-        console.log('Redirecting to hotel dashboard:', hotel.id);
-        navigate(`/hotel/${hotel.id}/dashboard`, { replace: true });
-      } else if (hotels.length === 0) {
-        console.log('No hotels found, redirecting to create hotel');
-        navigate('/create-hotel', { replace: true });
+      if (hotelCheck.hasHotel && hotelCheck.selectedHotel) {
+        setHotelId(hotelCheck.selectedHotel.id);
+        console.log('🏨 Redirecting to hotel dashboard:', hotelCheck.selectedHotel.id);
       } else {
-        console.log('Multiple hotels found, this should not happen in single hotel mode');
-        navigate('/create-hotel', { replace: true });
+        console.log('🏨 No hotel found, redirecting to create hotel');
       }
+      
+      // Navigate to the determined path
+      navigate(hotelCheck.redirectPath, { replace: true });
+      
     } catch (error) {
-      console.error('Error fetching hotels after login:', error);
-      // Show error and redirect to create hotel as fallback
+      console.error('🏨 Error during login hotel check:', error);
+      // On error, redirect to create hotel as fallback
       navigate('/create-hotel', { replace: true });
     } finally {
       setIsLoading(false);

@@ -93,7 +93,15 @@ export default function Users() {
           showToast('warning', 'Not authenticated', 'Please login to manage users.');
           return;
         }
-        const resp = await fetch(`${apiBaseUrl}/api/staff`, {
+        // Get selected hotel ID
+        const selectedHotel = localStorage.getItem('selected_hotel');
+        const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+        
+        const url = hotelId 
+          ? `${apiBaseUrl}/api/staff?hotel_id=${hotelId}`
+          : `${apiBaseUrl}/api/staff`;
+        
+        const resp = await fetch(url, {
           method: 'GET',
           headers: authHeaders,
         });
@@ -167,7 +175,11 @@ export default function Users() {
         throw new Error(data?.message || 'Create failed');
       }
       // Refresh list
-      const listResp = await fetch(`${apiBaseUrl}/api/staff`, { method: 'GET', headers: authHeaders });
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      const refreshUrl = hotelId ? `${apiBaseUrl}/api/staff?hotel_id=${hotelId}` : `${apiBaseUrl}/api/staff`;
+      
+      const listResp = await fetch(refreshUrl, { method: 'GET', headers: authHeaders });
       const listData = await listResp.json().catch(() => ({}));
       const refreshedUsers = Array.isArray(listData)
         ? listData
@@ -209,7 +221,11 @@ export default function Users() {
         throw new Error(data?.message || 'Update failed');
       }
       // Refresh list
-      const listResp = await fetch(`${apiBaseUrl}/api/staff`, { method: 'GET', headers: authHeaders });
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      const refreshUrl = hotelId ? `${apiBaseUrl}/api/staff?hotel_id=${hotelId}` : `${apiBaseUrl}/api/staff`;
+      
+      const listResp = await fetch(refreshUrl, { method: 'GET', headers: authHeaders });
       const listData = await listResp.json().catch(() => ({}));
       const refreshedUsers = Array.isArray(listData)
         ? listData

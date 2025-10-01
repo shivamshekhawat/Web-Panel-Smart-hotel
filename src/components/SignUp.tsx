@@ -41,14 +41,14 @@ const SignUp: React.FC<SignUpProps> = ({ onSignUp, onBackToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<Partial<SignUpData & { confirmPassword: string }>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof SignUpData | 'confirmPassword', string>>>({});
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    if (errors[name as keyof SignUpData]) {
+    if (errors[name as keyof SignUpData | 'confirmPassword']) {
       setErrors(prev => ({ ...prev, [name]: undefined }));
     }
     // Clear messages when user starts typing
@@ -57,7 +57,7 @@ const SignUp: React.FC<SignUpProps> = ({ onSignUp, onBackToLogin }) => {
   };
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<SignUpData & { confirmPassword: string }> = {};
+    const newErrors: Partial<Record<keyof SignUpData | 'confirmPassword', string>> = {};
 
     if (!formData.first_name.trim()) newErrors.first_name = 'First name is required';
     if (!formData.last_name.trim()) newErrors.last_name = 'Last name is required';
@@ -96,38 +96,12 @@ const SignUp: React.FC<SignUpProps> = ({ onSignUp, onBackToLogin }) => {
       } else {
         setSuccessMessage('Admin account created successfully! Logging you in...');
         
-        // Automatically attempt login after successful signup
-        try {
-          const loginResponse = await adminApi.login({
-            username: formData.username,
-            password: formData.password,
-            session_id: formData.session_id,
-          });
-
-          if (loginResponse.message === 'Login successful' && loginResponse.token) {
-            // Create user object for the parent callback
-            const user = {
-              username: loginResponse.admin?.first_name + ' ' + loginResponse.admin?.last_name || formData.username,
-              email: loginResponse.admin?.email || formData.email,
-              role: 'Hotel Administrator',
-              accessScope: 'full',
-            };
-            
-            setSuccessMessage('Account created and logged in successfully!');
-            
-            // Call the parent callback with user data (this will trigger login)
-            setTimeout(() => {
-              onSignUp(formData);
-            }, 1500);
-          } else {
-            setSuccessMessage('Account created successfully! You can now sign in manually.');
-            onSignUp(formData);
-          }
-        } catch (loginError) {
-          console.log('Auto-login failed after signup:', loginError);
-          setSuccessMessage('Account created successfully! You can now sign in manually.');
+        // Show success message and redirect to login
+        setSuccessMessage('Account created successfully! Redirecting to login...');
+        
+        setTimeout(() => {
           onSignUp(formData);
-        }
+        }, 1500);
 
         // Reset form after successful submission
         setTimeout(() => {
@@ -194,6 +168,7 @@ const SignUp: React.FC<SignUpProps> = ({ onSignUp, onBackToLogin }) => {
                     email: <Mail className="h-4 w-4" />,
                     mobile_number: <Phone className="h-4 w-4" />
                   };
+                  const fieldKey = field as 'first_name' | 'last_name' | 'email' | 'mobile_number';
                   return (
                     <div className="space-y-2" key={field}>
                       <label htmlFor={field} className="text-sm font-medium text-gray-700 flex items-center gap-2">
@@ -203,12 +178,12 @@ const SignUp: React.FC<SignUpProps> = ({ onSignUp, onBackToLogin }) => {
                         id={field}
                         name={field}
                         type={field === 'email' ? 'email' : 'text'}
-                        value={formData[field as keyof SignUpData]}
+                        value={formData[fieldKey]}
                         onChange={handleInputChange}
                         placeholder={`Enter ${labels[field].toLowerCase()}`}
-                        className={errors[field as keyof SignUpData] ? 'border-red-500 focus:ring-red-500' : ''}
+                        className={errors[fieldKey] ? 'border-red-500 focus:ring-red-500' : ''}
                       />
-                      {errors[field as keyof SignUpData] && <p className="text-sm text-red-500">{errors[field as keyof SignUpData]}</p>}
+                      {errors[fieldKey] && <p className="text-sm text-red-500">{errors[fieldKey]}</p>}
                     </div>
                   );
                 })}

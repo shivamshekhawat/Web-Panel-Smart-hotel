@@ -172,7 +172,6 @@ const Hotels = () => {
         }
       } else {
         setHotels([]);
-        setShowCreateForm(true); // Auto-show create form if no hotels
       }
     } catch (err: any) {
       console.error('API error:', err);
@@ -281,21 +280,38 @@ const Hotels = () => {
   // Server-only: no local persistence helper
 
     try {
-      // Try backend first if token exists
+      // Validate token first
       const token = adminApi.getToken();
-
       if (!token) {
         showErrorMessage('Please login to create a hotel.');
         setShowCreateForm(false);
         navigate('/', { replace: true });
         return;
       }
+      
+      // Validate token is still valid
+      console.log('🏨 Validating token before hotel creation...');
+      try {
+        const isTokenValid = await adminApi.validateToken();
+        if (!isTokenValid) {
+          showErrorMessage('Your session has expired. Please login again.');
+          setShowCreateForm(false);
+          setTimeout(() => {
+            navigate('/', { replace: true });
+          }, 2000);
+          return;
+        }
+        console.log('🏨 Token is valid, proceeding with hotel creation...');
+      } catch (validationError) {
+        console.warn('🏨 Token validation failed, but proceeding with hotel creation:', validationError);
+        // Continue with hotel creation even if validation fails
+        // The actual API call will handle invalid tokens
+      }
 
-      // ✅ Payload with proper key names (no spaces, backend-friendly)
       const payload = {
         Name: formData.name.trim(),
         Logo_url: formData.logo_url.trim(),
-        Established_year: formData.established_year, // number
+        Established_year: formData.established_year,
         Address: formData.address.trim(),
         Service_care_no: formData.service_care_no.trim(),
         City: formData.city.trim(),
@@ -307,85 +323,52 @@ const Hotels = () => {
       
 
       // Call backend API
+      console.log('🏨 Calling createHotel API with payload:', payload);
       const response = await adminApi.createHotel(payload);
-      console.log('Create hotel response:', response);
-      console.log('Response type:', typeof response);
-      console.log('Response keys:', Object.keys(response));
+      console.log('🏨 Create hotel response:', response);
+      console.log('🏨 Response type:', typeof response);
+      console.log('🏨 Response keys:', Object.keys(response));
 
       // Check if hotel creation was successful
-      if (!response.success) {
-        // Handle the specific error format from your backend
-        if (response.c && Array.isArray(response.c)) {
-          const errorMessage = response.c.join(', ');
-          throw new Error(`Validation errors: ${errorMessage}`);
-        }
+      if (response.message === 'Hotel created successfully' && response.hotel) {
+        // Success - add hotel to list and close form
+        const newHotel: HotelRecord = {
+          id: response.hotel.hotel_id?.toString() || Date.now().toString(),
+          name: response.hotel.name,
+          logo_url: response.hotel.logo_url,
+          established_year: response.hotel.established_year,
+          address: response.hotel.address,
+          service_care_no: response.hotel.service_care_no,
+          city: response.hotel.city,
+          country: response.hotel.country,
+          postal_code: response.hotel.postal_code,
+          username: formData.username, // Keep from form as it's not returned
+          password: formData.password, // Keep from form as it's not returned
+        };
+        
+        setHotels(prev => [...prev, newHotel]);
+        saveHotels([...hotels, newHotel]);
+        setShowCreateForm(false);
+        showSuccessMessage('Hotel Created Successfully');
+        
+        // Reset form
+        setFormData({
+          id: '',
+          name: '',
+          logo_url: '',
+          established_year: 0,
+          address: '',
+          service_care_no: '',
+          city: '',
+          country: '',
+          postal_code: '',
+          username: '',
+          password: '',
+        });
+      } else {
+        // Handle error response
         throw new Error(response.message || 'Failed to create hotel');
       }
-
-      showSuccessMessage('Hotel Created Successfully');
-
-      // Log the response to debug the structure
-      console.log('Hotel creation response:', response);
-      console.log('Response data:', response.data);
-
-      // Create the new hotel object and add it to the state immediately
-      const newHotel: HotelRecord = {
-        id: response.data?.id || response.data?.hotel_id || Date.now().toString(),
-        name: formData.name,
-        logo_url: formData.logo_url,
-        established_year: formData.established_year,
-        address: formData.address,
-        service_care_no: formData.service_care_no,
-        city: formData.city,
-        country: formData.country,
-        postal_code: formData.postal_code,
-        username: formData.username,
-        password: formData.password,
-      };
-
-      console.log('Created new hotel object:', newHotel);
-
-      // Add the new hotel to the current hotels list immediately
-      setHotels(prevHotels => {
-        const updatedHotels = [...prevHotels, newHotel];
-        // Clean and deduplicate the updated list
-        const cleanedHotels = cleanAndDeduplicateHotels(updatedHotels);
-        console.log('Updated hotels list:', cleanedHotels);
-        return cleanedHotels;
-      });
-
-      // Also reload from API to ensure consistency, but with a longer delay
-      setTimeout(async () => {
-        console.log('Reloading hotels from API for consistency...');
-        try {
-          await loadHotels();
-        } catch (error) {
-          console.error('Failed to reload hotels from API:', error);
-          // Don't show error to user since we already have the hotel in state
-        }
-      }, 1000);
-
-      // Reset form
-      setFormData({
-        id: '',
-        name: '',
-        logo_url: '',
-        established_year: 0,
-        address: '',
-        service_care_no: '',
-        city: '',
-        country: '',
-        postal_code: '',
-        username: '',
-        password: '',
-      });
-
-      // Clear any existing errors
-      setErrors({});
-
-      // Redirect to hotel dashboard after creation
-      localStorage.setItem('selected_hotel', JSON.stringify(newHotel));
-      navigate(`/hotel/${newHotel.id}/dashboard`, { replace: true });
     } catch (err: any) {
       console.error('API error:', err);
       console.error('Error details:', {
@@ -399,23 +382,15 @@ const Hotels = () => {
       let message = 'Failed to create hotel';
       
       if (err instanceof ApiError) {
-        // Handle specific API errors
-        if (err.status === 400) {
-          message = err.message || 'Invalid hotel data provided';
-        } else if (err.status === 409) {
-          message = 'Hotel with this username already exists';
-        } else if (err.status === 401) {
-          message = 'Please login to create a hotel';
-          setShowCreateForm(false);
-          navigate('/', { replace: true });
+        if (err.status === 401) {
+          // Token expired - redirect to login
+          showErrorMessage('Your session has expired. Please login again.');
+          setTimeout(() => {
+            navigate('/', { replace: true });
+          }, 2000);
           return;
-        } else if (err.message.includes('HTML instead of JSON')) {
-          message = 'API server is not responding correctly. Please check if the backend server is running.';
-        } else if (err.message.includes('Validation errors:')) {
-          message = err.message;
-        } else {
-          message = err.message || 'Failed to create hotel';
         }
+        message = err.message || 'Failed to create hotel';
       } else if (err?.response?.data?.message) {
         message = err.response.data.message;
       } else if (err?.message) {
@@ -425,9 +400,6 @@ const Hotels = () => {
       showErrorMessage(message);
     } finally {
       setIsSubmitting(false);
-      // Close the form modal after all state updates are complete
-      setShowCreateForm(false);
-      console.log('Modal closed in finally block');
     }
   };
   
@@ -494,9 +466,35 @@ const Hotels = () => {
             <p className="text-slate-500 dark:text-slate-400">Please wait while we check your hotel...</p>
           </div>
         ) : (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-            <div className="relative w-full max-w-3xl bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700">
+          <>
+            {hotels.length === 0 && (
+              <div className="text-center py-12">
+                <h3 className="text-lg font-semibold mb-4">No Hotels Found</h3>
+                <button onClick={() => setShowCreateForm(true)} className="mb-4 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+                  Create Your First Hotel
+                </button>
+              </div>
+            )}
+            
+            {hotels.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {hotels.map((hotel) => (
+                  <div
+                    key={hotel.id}
+                    onClick={() => handleSelectHotel(hotel)}
+                    className="p-4 border rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    <h3 className="font-semibold">{hotel.name}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{hotel.city}, {hotel.country}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {showCreateForm && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowCreateForm(false)} />
+                <div className="relative w-full max-w-3xl bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
                 <div>
                   <h2 className="text-xl font-semibold">Create Hotel</h2>
@@ -583,6 +581,8 @@ const Hotels = () => {
               </form>
             </div>
           </div>
+            )}
+          </>
         )}
 
 

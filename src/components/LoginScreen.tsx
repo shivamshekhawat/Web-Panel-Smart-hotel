@@ -550,18 +550,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     storeAdmin(signUpData);
     console.log('New admin account created:', signUpData);
     
-    // Show success message and switch back to login
+    // Always redirect to login page after signup
     setActiveScreen('login');
     setError(null);
-    
-    // Optionally, you can automatically log them in:
-    // const newUser: User = {
-    //   username: signUpData.username,
-    //   email: signUpData.email,
-    //   role: 'Hotel Administrator',
-    //   accessScope: 'full',
-    // };
-    // onLogin(newUser);
   };
 
   const handleBackToLogin = () => {

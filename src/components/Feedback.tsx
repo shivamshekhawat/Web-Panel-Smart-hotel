@@ -48,14 +48,18 @@ const Feedback = () => {
     async function fetchFeedbackAndGuests() {
       setLoading(true);
       try {
-        // Fetch feedback
-        const feedbackRes = await adminApi.getAllFeedback();
+        // Get selected hotel ID
+        const selectedHotel = localStorage.getItem('selected_hotel');
+        const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+        
+        // Fetch feedback for specific hotel
+        const feedbackRes = await adminApi.getAllFeedback(hotelId);
         const feedbackList: FeedbackApiItem[] = Array.isArray(feedbackRes)
           ? feedbackRes
           : [];
 
-        // Fetch guests
-        const guestsRes = await adminApi.getAllGuests();
+        // Fetch guests for specific hotel
+        const guestsRes = await adminApi.getAllGuests(hotelId);
         let guests: GuestData[] = [];
         if (Array.isArray(guestsRes)) {
           guests = guestsRes;

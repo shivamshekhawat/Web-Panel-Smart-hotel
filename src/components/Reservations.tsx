@@ -4,40 +4,115 @@ import { Badge } from "./ui/badge";
 import { formatDate } from "../lib/utils";
 import adminApi from "../services/api";
 
-interface GuestWithRoom {
+interface ReservationData {
   guest_id: number;
   first_name: string;
   last_name: string;
   email: string;
   phone: string;
-  room?: {
-    room_number: string;
-    check_in_time: string;
-    check_out_time: string;
-    is_checked_in: boolean;
-  };
+  room_number?: string;
+  check_in_time?: string;
+  check_out_time?: string;
+  is_checked_in: boolean;
 }
 
 const Reservations = () => {
-  const [guests, setGuests] = useState<GuestWithRoom[]>([]);
+  const [reservations, setReservations] = useState<ReservationData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchGuestsWithRooms = async () => {
+    const fetchReservations = async () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await adminApi.getGuestsWithRooms();
-        setGuests(data);
+        // Get selected hotel ID
+        const selectedHotel = localStorage.getItem('selected_hotel');
+        const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+        
+        // Fetch reservations, guests, and rooms in parallel
+        const [reservationsData, guestsData, roomsData] = await Promise.all([
+          adminApi.getAllReservations(hotelId),
+          adminApi.getAllGuests(hotelId),
+          adminApi.getAllRooms(hotelId)
+        ]);
+
+        const guests = Array.isArray(guestsData) ? guestsData : (guestsData as any)?.data || [];
+        const rooms = Array.isArray(roomsData) ? roomsData : (roomsData as any)?.data || [];
+        
+
+        const reservations = Array.isArray(reservationsData) ? reservationsData : [];
+
+        // Create maps for quick lookup
+        const guestMap = new Map();
+        guests.forEach((guest: any) => {
+          const guestId = guest.guest_id || guest.id;
+          guestMap.set(guestId, guest);
+        });
+
+        const roomMap = new Map();
+        rooms.forEach((room: any) => {
+          const roomId = room.id || room.room_id;
+          roomMap.set(roomId, room);
+        });
+
+        // Create reservation map for quick lookup
+        const reservationMap = new Map();
+        const seenReservations = new Set<string>();
+        
+        reservations.forEach((reservation: any) => {
+          const guestId = reservation.guest_id;
+          const roomId = reservation.room_id;
+          const dedupeKey = `${guestId}-${roomId}`;
+          
+          if (!seenReservations.has(dedupeKey) && guestId && guestMap.has(guestId)) {
+            seenReservations.add(dedupeKey);
+            const room = roomMap.get(roomId);
+            const roomNumber = room?.room_number || room?.roomNumber || room?.number;
+            
+            reservationMap.set(guestId, {
+              room_number: roomNumber,
+              check_in_time: reservation.check_in_time || reservation.check_in,
+              check_out_time: reservation.check_out_time || reservation.check_out,
+              is_checked_in: reservation.is_checked_in || false,
+            });
+          }
+        });
+
+        // Combine all guests with their reservation data
+        const combinedData: ReservationData[] = guests.map((guest: any) => {
+          const guestId = guest.guest_id || guest.id;
+          const reservationData = reservationMap.get(guestId);
+          
+          const result = {
+            guest_id: guestId,
+            first_name: guest.first_name || '',
+            last_name: guest.last_name || '',
+            email: guest.email || '',
+            phone: guest.phone || '',
+            room_number: reservationData?.room_number,
+            check_in_time: reservationData?.check_in_time,
+            check_out_time: reservationData?.check_out_time,
+            is_checked_in: reservationData?.is_checked_in || false,
+          };
+          
+
+          
+          return result;
+        });
+        
+
+
+        setReservations(combinedData);
       } catch (err: any) {
-        setError(err.message || 'Failed to load guest data');
+        console.error('Error fetching reservations:', err);
+        setError(err.message || 'Failed to load reservation data');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchGuestsWithRooms();
+    fetchReservations();
   }, []);
 
   if (loading) {
@@ -72,7 +147,7 @@ const Reservations = () => {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Reservations</h2>
         <div className="text-sm text-gray-500 dark:text-gray-400">
-          Total: {guests.length} guests
+          Total: {reservations.length} guests
         </div>
       </div>
 
@@ -82,48 +157,96 @@ const Reservations = () => {
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
+            <table className="w-full min-w-[800px]">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Name</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Email</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Phone</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Room</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Check-in</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Check-out</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Guest</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Contact</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Room</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Check-in</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Check-out</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {guests.map((guest) => (
-                  <tr key={guest.guest_id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                    <td className="p-3">
-                      <div className="font-medium text-gray-900 dark:text-white">
-                        {guest.first_name} {guest.last_name}
+              <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                {reservations.map((reservation) => (
+                  <tr key={reservation.guest_id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col">
+                        <div className="font-medium text-gray-900 dark:text-white text-sm">
+                          {reservation.first_name} {reservation.last_name}
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          ID: {reservation.guest_id}
+                        </div>
                       </div>
                     </td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300">{guest.email}</td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300">{guest.phone}</td>
-                    <td className="p-3">
-                      <Badge variant="outline">
-                        {guest.room?.room_number || 'N/A'}
+                    <td className="px-4 py-4">
+                      <div className="flex flex-col space-y-1">
+                        <div className="text-sm text-gray-900 dark:text-gray-300">{reservation.email}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{reservation.phone}</div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <Badge variant={reservation.room_number ? "default" : "secondary"} className="font-medium">
+                        {reservation.room_number || 'N/A'}
                       </Badge>
                     </td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300">
-                      {guest.room?.check_in_time ? formatDate(guest.room.check_in_time) : 'N/A'}
+                    <td className="px-4 py-4 text-center">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-300">
+                        {reservation.check_in_time ? (
+                          <div className="flex flex-col">
+                            <span>{new Date(reservation.check_in_time).toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric', 
+                              year: 'numeric' 
+                            })}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(reservation.check_in_time).toLocaleTimeString('en-US', { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">N/A</span>
+                        )}
+                      </div>
                     </td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300">
-                      {guest.room?.check_out_time ? formatDate(guest.room.check_out_time) : 'N/A'}
+                    <td className="px-4 py-4 text-center">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-300">
+                        {reservation.check_out_time ? (
+                          <div className="flex flex-col">
+                            <span>{new Date(reservation.check_out_time).toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric', 
+                              year: 'numeric' 
+                            })}</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(reservation.check_out_time).toLocaleTimeString('en-US', { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">N/A</span>
+                        )}
+                      </div>
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-4 text-center">
                       <Badge 
                         variant={
-                          !guest.room ? "secondary" : 
-                          guest.room.is_checked_in ? "success" : "destructive"
+                          !reservation.room_number ? "secondary" : 
+                          reservation.is_checked_in ? "default" : "outline"
+                        }
+                        className={
+                          !reservation.room_number ? "bg-gray-100 text-gray-600" : 
+                          reservation.is_checked_in ? "bg-green-100 text-green-800 border-green-200" : "bg-yellow-100 text-yellow-800 border-yellow-200"
                         }
                       >
-                        {!guest.room ? 'No Room' : 
-                         guest.room.is_checked_in ? 'Checked In' : 'Not Checked In'}
+                        {!reservation.room_number ? 'No Room' : 
+                         reservation.is_checked_in ? 'Checked In' : 'Pending'}
                       </Badge>
                     </td>
                   </tr>

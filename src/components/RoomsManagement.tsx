@@ -11,7 +11,7 @@ import {
   Calendar,
   CreditCard,
   Search,
-  ArrowUpDown,
+
   Home,
   
   
@@ -79,10 +79,7 @@ const RoomsManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<RoomStatus | "all">("all")
   const [floorFilter, setFloorFilter] = useState<number | "all">("all")
-  const [sortBy, ] = useState<"number">("number")
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
-
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
+  const [sortOrder] = useState<"asc" | "desc">("asc")
   const [rooms, setRooms] = useState<RoomDetailsModalProps["room"][]>([])
   const [showAddRoomModal, setShowAddRoomModal] = useState(false)
   const [showUpdateRoomModal, setShowUpdateRoomModal] = useState(false)
@@ -115,19 +112,6 @@ const RoomsManagement: React.FC = () => {
     setIsLoading(true)
     setError(null)
     try {
-      // Read selected hotel from localStorage (set on dashboard/hotels page) – prefer numeric hotel_id
-      let hotel_id = "";
-      try {
-        const stored = localStorage.getItem("selected_hotel");
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          const candidate = parsed?.hotel_id ?? parsed?.id ?? parsed?.hotelId;
-          hotel_id = candidate != null && /^\d+$/.test(String(candidate)) ? String(candidate) : "";
-        }
-      } catch (e) {
-        console.warn("Failed to parse selected_hotel from localStorage", e);
-      }
-
       // Helper: transform a backend room object into UI room shape handling variant keys
       const toUiRoom = (r: any): RoomDetailsModalProps["room"] => {
         const numberRaw = r?.room_number ?? r?.roomNumber ?? r?.number ?? r?.room ?? r?.id ?? "";
@@ -158,20 +142,96 @@ const RoomsManagement: React.FC = () => {
           guestName: guestFull || undefined,
           guestEmail: r?.guest_email ?? r?.guest?.email ?? undefined,
           guestPhone: r?.guest_phone ?? r?.guest?.phone ?? undefined,
-          checkIn: r?.check_in ?? r?.checkIn ?? undefined,
-          checkOut: r?.check_out ?? r?.checkOut ?? undefined,
+          checkIn: r?.check_in_time ?? r?.check_in ?? r?.checkIn ?? r?.checkin_date ?? r?.checkinDate ?? undefined,
+          checkOut: r?.check_out_time ?? r?.check_out ?? r?.checkOut ?? r?.checkout_date ?? r?.checkoutDate ?? undefined,
         };
       };
 
-      let roomsData: any[] = [];
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      // Fetch rooms, guests, and reservations in parallel
+      const [roomsResponse, guestsWithRoomsResponse, reservationsResponse] = await Promise.all([
+        adminApi.getAllRooms(hotelId),
+        adminApi.getGuestsWithRooms().catch(() => []),
+        adminApi.getAllReservations(hotelId).catch(() => [])
+      ]);
 
-      // Always use GET /api/rooms without hotel filter
-      console.log("Fetching all rooms from GET /api/rooms");
-      const responseAll = await adminApi.getAllRooms();
-      console.log("getAllRooms() response:", responseAll);
-      roomsData = Array.isArray(responseAll) ? responseAll : (responseAll as any)?.data ?? [];
+      console.log("getAllRooms() response:", roomsResponse);
+      console.log("getGuestsWithRooms() response:", guestsWithRoomsResponse);
+      console.log("getAllReservations() response:", reservationsResponse);
 
-      const transformedRooms: RoomDetailsModalProps["room"][] = (roomsData || []).map(toUiRoom).filter(r => !!r.number);
+      const roomsData = Array.isArray(roomsResponse) ? roomsResponse : (roomsResponse as any)?.data ?? [];
+      const guestsData = Array.isArray(guestsWithRoomsResponse) ? guestsWithRoomsResponse : [];
+      const reservationsData = Array.isArray(reservationsResponse) ? reservationsResponse : [];
+
+      // Create a map of room numbers to reservation data
+      const roomReservationMap = new Map();
+      
+      // First, map from reservations API (primary source)
+      reservationsData.forEach((reservation: any) => {
+        const roomId = reservation?.room_id;
+        const guestId = reservation?.guest_id;
+        
+        if (roomId && guestId) {
+          // Find the room number from rooms data
+          const room = roomsData.find((r: any) => String(r.id || r.room_id) === String(roomId));
+          const roomNumber = room?.room_number || room?.roomNumber || room?.number;
+          
+          // Find guest info from guests data
+          const guest = guestsData.find((g: any) => String(g.guest_id || g.id) === String(guestId));
+          
+          if (roomNumber) {
+            roomReservationMap.set(String(roomNumber), {
+              guestName: guest ? `${guest.first_name || ''} ${guest.last_name || ''}`.trim() : 'Guest',
+              guestEmail: guest?.email || '',
+              guestPhone: guest?.phone || '',
+              checkIn: reservation.check_in_time || reservation.check_in || reservation.checkIn,
+              checkOut: reservation.check_out_time || reservation.check_out || reservation.checkOut,
+              isCheckedIn: reservation.is_checked_in || false,
+            });
+          }
+        }
+      });
+      
+      // Fallback: map from guests with rooms data
+      guestsData.forEach((guest: any) => {
+        const roomNumber = guest?.room_number ?? guest?.roomNumber ?? guest?.room?.number;
+        if (roomNumber && !roomReservationMap.has(String(roomNumber))) {
+          roomReservationMap.set(String(roomNumber), {
+            guestName: `${guest.first_name || ''} ${guest.last_name || ''}`.trim(),
+            guestEmail: guest.email,
+            guestPhone: guest.phone,
+            checkIn: guest.check_in_time ?? guest.check_in ?? guest.checkIn,
+            checkOut: guest.check_out_time ?? guest.check_out ?? guest.checkOut,
+            isCheckedIn: false,
+          });
+        }
+      });
+
+      const transformedRooms: RoomDetailsModalProps["room"][] = (roomsData || []).map((r: any) => {
+        console.log('Raw room data:', r);
+        const room = toUiRoom(r);
+        
+        // Merge reservation data if available
+        const reservationData = roomReservationMap.get(room.number);
+        if (reservationData) {
+          return {
+            ...room,
+            status: 'occupied' as RoomStatus,
+            guestName: reservationData.guestName || room.guestName,
+            guestEmail: reservationData.guestEmail || room.guestEmail,
+            guestPhone: reservationData.guestPhone || room.guestPhone,
+            checkIn: reservationData.checkIn || room.checkIn,
+            checkOut: reservationData.checkOut || room.checkOut,
+          };
+        }
+        
+        return room;
+      }).filter((r: any) => !!r.number);
+
+      console.log('Transformed rooms with reservations:', transformedRooms);
 
       if (!transformedRooms.length) {
         setError("No rooms found for the selected hotel.");
@@ -213,7 +273,11 @@ const RoomsManagement: React.FC = () => {
   const fetchGuests = async () => {
     setIsLoadingGuests(true)
     try {
-      const response = await adminApi.getAllGuests()
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      const response = await adminApi.getAllGuests(hotelId)
       const guestData = Array.isArray(response) ? response : response.data || []
       const guestList = guestData.map((g: any) => ({
         id: String(g.id || g.guest_id || ''),
@@ -274,25 +338,26 @@ const RoomsManagement: React.FC = () => {
       guestName: selectedGuest?.name || ""
     }))
     
-    // Try to auto-fill from PynBooking if room is selected
-    if (reserveRoom && guestId) {
-      try {
-        const roomReservation = await pynBookingApi.getReservationByRoom(reserveRoom.number)
-        if (roomReservation.guestId === guestId) {
-          setReservationForm(prev => ({
-            ...prev,
-            guestName: roomReservation.guestName,
-            checkIn: roomReservation.checkInDate + 'T14:00',
-            checkOut: roomReservation.checkOutDate + 'T11:00'
-          }))
-        }
-      } catch (error) {
-        console.log('PynBooking data not found for this guest/room combination')
-      }
-    }
-    
     setReserveError(null)
   }
+
+  const handleGuestIdChange = async (guestId: string) => {
+    setReservationForm(prev => ({ ...prev, guestId, guestName: "" }))
+    setReserveError(null)
+    
+    if (!guestId.trim()) return
+    
+    try {
+      const guest = await fetchGuestById(guestId)
+      if (guest) {
+        setReservationForm(prev => ({ ...prev, guestName: guest.name }))
+      }
+    } catch (e: any) {
+      setReserveError(`Guest ID ${guestId} not found`)
+    }
+  }
+
+
 
   const submitReservation = async () => {
     if (!reserveRoom) return
@@ -314,6 +379,10 @@ const RoomsManagement: React.FC = () => {
           ? { ...r, status: 'occupied' as RoomStatus, guestName: reservationForm.guestName }
           : r
       ))
+
+      // Notify dashboard to refresh
+      const reservationEvent = new CustomEvent('reservationUpdated');
+      window.dispatchEvent(reservationEvent);
 
       // Update UI and show toast
       const event = new CustomEvent('showToast', {
@@ -359,17 +428,7 @@ const RoomsManagement: React.FC = () => {
     setSelectedRoom(null)
   }
 
-  const toggleSortOrder = (field: typeof sortBy) => {
-    setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))
-  }
 
-  const getSortIcon = (field: typeof sortBy) => {
-    return sortOrder === "asc" ? (
-      <ArrowUpDown className="ml-1 h-3 w-3 rotate-180" />
-    ) : (
-      <ArrowUpDown className="ml-1 h-3 w-3" />
-    )
-  }
 
   const handleAddRoom = () => {
     if (!newRoom.number) {
@@ -642,10 +701,14 @@ const RoomsManagement: React.FC = () => {
                     <div className="flex-1">
                       <p className="text-xs font-bold text-indigo-700 dark:text-indigo-400 uppercase tracking-wide mb-1">Current Guest</p>
                       <p className="font-bold text-gray-900 dark:text-white">{room.guestName}</p>
-                      <div className="flex items-center text-sm text-indigo-600 dark:text-indigo-400 mt-1">
-                        <Calendar className="h-3 w-3 mr-1" />
-                        <span className="font-medium">{room.checkIn} - {room.checkOut}</span>
-                      </div>
+                      {(room.checkIn || room.checkOut) && (
+                        <div className="flex items-center text-sm text-indigo-600 dark:text-indigo-400 mt-1">
+                          <Calendar className="h-3 w-3 mr-1" />
+                          <span className="font-medium">
+                            {room.checkIn ? new Date(room.checkIn).toLocaleDateString() : 'N/A'} - {room.checkOut ? new Date(room.checkOut).toLocaleDateString() : 'N/A'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="h-10 w-10 bg-indigo-500 dark:bg-indigo-600 rounded-full flex items-center justify-center ml-3">
                       <User2 className="h-5 w-5 text-white" />
@@ -669,7 +732,6 @@ const RoomsManagement: React.FC = () => {
     `}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActiveRoomId(room.id);
                     handleRoomClick(room);
                   }}
                 >
@@ -902,28 +964,15 @@ const RoomsManagement: React.FC = () => {
 
             <div className="grid grid-cols-1 gap-4">
               <div>
-                <label className="text-sm font-medium">Select Guest</label>
-                <select
-                  className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
-                  value={reservationForm.guestId}
-                  onChange={(e) => handleGuestSelection(e.target.value)}
-                >
-                  <option value="">
-                    {isLoadingGuests ? "Loading guests..." : guests.length === 0 ? "No guests found" : "Select a guest"}
-                  </option>
-                  {!isLoadingGuests && guests.map(guest => (
-                    <option key={guest.id} value={guest.id}>
-                      {guest.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
                 <label className="text-sm font-medium">Guest ID</label>
-                <Input value={reservationForm.guestId} readOnly placeholder="Auto-filled" />
+                <Input
+                  value={reservationForm.guestId}
+                  onChange={(e) => handleGuestIdChange(e.target.value.trim())}
+                  placeholder="Enter Guest ID"
+                />
               </div>
               <div>
-                <label className="text-sm font-medium">Guest Name</label>
+                <label className="text-sm font-medium">Name</label>
                 <Input value={reservationForm.guestName} readOnly placeholder="Auto-filled" />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

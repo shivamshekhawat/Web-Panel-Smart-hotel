@@ -68,31 +68,24 @@ const Notifications = () => {
       const token = adminApi.getToken?.();
       if (!token) throw new Error('Please login again.');
 
-      // Resolve selected hotel id from storage (prefer numeric hotel_id)
-      let hotelId: string | undefined;
-      try {
-        const raw = localStorage.getItem('selected_hotel');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const candidate = parsed?.hotel_id ?? parsed?.id ?? parsed?.hotelId;
-          if (candidate != null && /^\d+$/.test(String(candidate))) {
-            hotelId = String(candidate);
-          }
-        }
-      } catch {}
+      console.log('🔍 Loading rooms for notifications...');
+      
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      // Load rooms for specific hotel
+      const list = await adminApi.getAllRooms(hotelId);
+      console.log('🔍 Rooms loaded:', list);
 
-      if (!hotelId) {
-        console.warn('No selected hotel found in storage. Loading all rooms as fallback.');
-      }
-
-      // Use centralized API which normalizes response and headers
-      const list = await adminApi.getAllRooms(hotelId as any);
-
-      setRooms((Array.isArray(list) ? list : []).map((room: any) => ({
+      const transformedRooms = (Array.isArray(list) ? list : []).map((room: any) => ({
         id: room.id ?? room.room_id ?? '',
         number: room.room_number ?? String(room.number ?? ''),
         guest: room.guest_name ?? room.guest ?? undefined,
-      })));
+      }));
+      
+      console.log('🔍 Transformed rooms:', transformedRooms);
+      setRooms(transformedRooms);
     } catch (err) {
       console.error('Error loading rooms:', err);
       setRooms([]);
@@ -105,27 +98,29 @@ const Notifications = () => {
       const token = adminApi.getToken?.();
       if (!token) throw new Error('Please login again.');
 
-      // Resolve selected hotel id from storage
-      let hotelId: string | number | undefined;
-      try {
-        const raw = localStorage.getItem('selected_hotel');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          hotelId = parsed?.id ?? parsed?.hotel_id ?? undefined;
-        }
-      } catch {}
-
-      const resp = await adminApi.getAllGuests(hotelId as any);
+      console.log('🔍 Loading guests for notifications...');
+      
+      // Get selected hotel ID
+      const selectedHotel = localStorage.getItem('selected_hotel');
+      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      
+      // Load guests for specific hotel
+      const resp = await adminApi.getAllGuests(hotelId);
       const list: any[] = Array.isArray(resp)
         ? resp
         : (Array.isArray((resp as any)?.data) ? (resp as any).data : []);
 
-      setGuests(list.map((g: any) => ({
+      console.log('🔍 Guests loaded:', list);
+      
+      const transformedGuests = list.map((g: any) => ({
         id: g.id ?? g.guest_id ?? '',
         name: [g.first_name, g.last_name].filter(Boolean).join(' ') || g.name || g.username || '',
         roomNumber: g.room_number ?? g.roomNumber ?? undefined,
         roomId: g.room_id ?? g.roomId ?? undefined,
-      })));
+      }));
+      
+      console.log('🔍 Transformed guests:', transformedGuests);
+      setGuests(transformedGuests);
     } catch (err) {
       console.error('Error loading guests:', err);
       setGuests([]);
@@ -195,10 +190,11 @@ const Notifications = () => {
     }
   };
 
-  // Load notifications and rooms on component mount
+  // Load notifications, rooms, and guests on component mount
   useEffect(() => {
     loadNotifications();
     loadRooms();
+    loadGuests();
   }, []);
 
   // Ensure data loads when user switches target
