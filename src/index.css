@@ -1,0 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Remove autofill icons and style autofilled inputs */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  /* Remove the default autofill background color */
+  -webkit-text-fill-color: #000 !important;
+  -webkit-box-shadow: 0 0 0px 1000px white inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+  /* This transition will prevent the autofill background from ever appearing */
+}
+
+/* Specifically target email inputs */
+input[type="email"] {
+  /* This will hide the default browser autofill icon in most browsers */
+  &::-webkit-contacts-auto-fill-button,
+  &::-webkit-credentials-auto-fill-button {
+    visibility: hidden;
+    display: none !important;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+  }
+  
+  /* For Firefox */
+  &:-moz-autofill,
+  &:-moz-autofill-preview {
+    filter: none;
+  }
+}
+
+/* For Microsoft Edge */
+input[type="email"]::-ms-clear,
+input[type="email"]::-ms-reveal {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* For IE11 */
+_:-ms-lang(x)::-ms-backdrop,
+input[type="email"]::-ms-clear,
+input[type="email"]::-ms-reveal {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* For Firefox autofill */
+input:-moz-autofill,
+input:-moz-autofill:focus {
+  background-image: none !important;
+  box-shadow: 0 0 0 30px white inset !important;
+  -webkit-text-fill-color: black !important;
+}
+input:-moz-autofill:focus {
+    background-image: none !important;
+    box-shadow: 0 0 0 30px white inset !important; /* Use your input's background color */
+    -webkit-text-fill-color: black !important; /* Use your input's text color */
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 94.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer components {
+  .sidebar-nav {
+    @apply flex flex-col space-y-1;
+  }
+  
+  .sidebar-nav-item {
+    @apply flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors hover:bg-accent hover:text-accent-foreground;
+  }
+  
+  .sidebar-nav-item.active {
+    @apply bg-primary text-primary-foreground;
+  }
+  
+  .stat-card {
+    @apply p-6 rounded-2xl border bg-card shadow-sm hover:shadow-md transition-shadow;
+  }
+  
+  .floating-action-button {
+    @apply fixed bottom-6 right-6 w-14 h-14 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center;
+  }
+
+  /* Extra content padding when sidebar is present (desktop and up) */
+  @media (min-width: 768px) {
+    .with-sidebar {
+      padding-left: calc(var(--sidebar-width, 0px) + 16px);
+    }
+  }
+}
