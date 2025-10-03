@@ -1,5 +1,5 @@
 // Environment configuration
-const resolvedApiBaseUrl = (process.env.REACT_APP_API_BASE_URL || 'https://cbe3f8b8708a.ngrok-free.app').trim();
+const resolvedApiBaseUrl = (process.env.REACT_APP_API_BASE_URL || 'https://9c544eaf310d.ngrok-free.app').trim();
 
 // Force cache refresh
 console.log('🔄 Environment loaded at:', new Date().toISOString());

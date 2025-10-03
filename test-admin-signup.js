@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const API_BASE_URL = 'https://cbe3f8b8708a.ngrok-free.app';
+const API_BASE_URL = 'https://9c544eaf310d.ngrok-free.app';
 
 async function testAdminSignupEndpoints() {
   console.log('🧪 Testing Admin Signup Endpoints\n');

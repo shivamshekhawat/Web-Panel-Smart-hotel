@@ -614,14 +614,14 @@ const Dashboard = () => {
                     Established {selectedHotel.established_year} • Service: {selectedHotel.service_care_no}
                   </p>
                 </div>
-                <Button
+                {/* <Button
                   variant="outline"
                   onClick={() => navigate('/hotels')}
                   className="flex items-center gap-2"
                 >
                   <Building2 className="h-4 w-4" />
                   Switch Hotel
-                </Button>
+                </Button> */}
               </div>
             </CardContent>
           </Card>

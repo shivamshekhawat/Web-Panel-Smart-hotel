@@ -68,7 +68,7 @@ npm install
 3. Set up environment variables:
 Create a `.env.local` file in the root directory and add:
 ```bash
-REACT_APP_API_BASE_URL=https://cbe3f8b8708a.ngrok-free.app
+REACT_APP_API_BASE_URL=https://9c544eaf310d.ngrok-free.app
 ```
 
 4. Start the development server:
@@ -158,7 +158,7 @@ The application integrates with a backend API for admin account creation:
 ### Environment Configuration
 Set the API base URL in your environment:
 ```bash
-REACT_APP_API_BASE_URL=https://31df96577dd0.ngrok-free.app 
+REACT_APP_API_BASE_URL=https://9c544eaf310d.ngrok-free.app 
 ```
 
 ## Customization

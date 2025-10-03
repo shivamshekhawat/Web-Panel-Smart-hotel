@@ -1,7 +1,7 @@
 # API Testing Report - Smart Hotel Room Project
 
 **Test Date:** October 1, 2025  
-**API Base URL:** https://cbe3f8b8708a.ngrok-free.app  
+**API Base URL:** https://9c544eaf310d.ngrok-free.app  
 **Total Endpoints Tested:** 20  
 **Success Rate:** 25.0% (5 passed, 15 failed)
 
