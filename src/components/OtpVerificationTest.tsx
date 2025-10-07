@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 
-const API_BASE_URL = 'https://9c544eaf310d.ngrok-free.app';
+const API_BASE_URL = 'https://557fd583d2a4.ngrok-free.app';
 
 export const OtpVerificationTest: React.FC = () => {
   const [email, setEmail] = useState('');

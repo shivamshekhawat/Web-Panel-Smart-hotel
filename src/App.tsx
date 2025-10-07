@@ -51,20 +51,28 @@ const App = () => {
 
   // Check for stored auth info and hotel
   useEffect(() => {
+    let isMounted = true;
+    
     const checkAuthAndHotel = async () => {
+      if (!isMounted) return;
+      
       try {
         const storedAuth = localStorage.getItem('isAuthenticated');
         const storedUser = localStorage.getItem('currentUser');
         const token = adminApi.getToken();
         
         if (storedAuth === 'true' && storedUser && token) {
+          if (!isMounted) return;
+          
           setIsAuthenticated(true);
           setCurrentUser(JSON.parse(storedUser));
           
-          // Check admin's hotels
+          // Check admin's hotels only once
           try {
             const hotelCheck = await checkAdminHotels();
             console.log('🏨 Initial hotel check result:', hotelCheck);
+            
+            if (!isMounted) return;
             
             if (hotelCheck.hasHotel && hotelCheck.selectedHotel) {
               setHotelId(hotelCheck.selectedHotel.id);
@@ -85,12 +93,18 @@ const App = () => {
       } catch (error) {
         console.error('Error restoring auth state:', error);
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
     
     checkAuthAndHotel();
-  }, [navigate]);
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate, location.pathname]);
 
   const handleLogin = async (user: User) => {
     console.log('🔐 Handling login for user:', user);
@@ -129,9 +143,11 @@ const App = () => {
   const handleLogout = () => {
     setCurrentUser(null);
     setIsAuthenticated(false);
+    setHotelId(null);
     localStorage.removeItem('isAuthenticated');
     localStorage.removeItem('currentUser');
     localStorage.removeItem('currentUserId');
+    localStorage.removeItem('selected_hotel');
     // Clear persisted auth token and admin info
     adminApi.clearToken();
     navigate('/sign-in', { replace: true });

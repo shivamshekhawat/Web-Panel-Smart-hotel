@@ -1,6 +1,7 @@
 // api/adminApi.ts
 import config from '../config/environment';
 import type { RoomDashboardApiResponse } from '../types/roomDashboard';
+import { dataCache } from './dataCache';
 
 const API_BASE_URL = config.apiBaseUrl;
 
@@ -238,10 +239,18 @@ export interface GuestByIdResponse {
 export interface NotificationData {
   id?: string;
   room_id: string;
+  room_number: string;
   message: string;
   type: string;
   created_time: string;
   is_read: boolean;
+}
+
+export interface HotelNotificationsResponse {
+  success: boolean;
+  count: number;
+  data: NotificationData[];
+  error?: string;
 }
 
 export interface SendNotificationPayload {
@@ -779,6 +788,9 @@ export const adminApi = {
       const result = await handleResponse<CreateRoomResponse>(response, 'Create room failed');
       console.log('Create room response:', result);
 
+      // Invalidate room cache
+      dataCache.clear('rooms');
+
       return result;
     } catch (error) {
       console.error('Create room API error:', error);
@@ -788,33 +800,37 @@ export const adminApi = {
 
   // Get All Rooms (requires login)
   async getAllRooms(hotel_id?: string | number): Promise<RoomData[]> {
-    // If hotel_id is provided, use path param: /api/rooms/:hotelId, else fetch all rooms
-    const raw = hotel_id !== undefined && hotel_id !== null ? String(hotel_id).trim() : '';
-    const isNumeric = raw !== '' && /^\d+$/.test(raw);
-    const url = isNumeric
-      ? `${API_BASE_URL}/api/rooms/${encodeURIComponent(raw)}`
-      : `${API_BASE_URL}/api/rooms`;
+    const cacheKey = `rooms_${hotel_id || 'all'}`;
+    
+    return dataCache.get(cacheKey, async () => {
+      // If hotel_id is provided, use path param: /api/rooms/:hotelId, else fetch all rooms
+      const raw = hotel_id !== undefined && hotel_id !== null ? String(hotel_id).trim() : '';
+      const isNumeric = raw !== '' && /^\d+$/.test(raw);
+      const url = isNumeric
+        ? `${API_BASE_URL}/api/rooms/${encodeURIComponent(raw)}`
+        : `${API_BASE_URL}/api/rooms`;
 
-    console.log('Fetching rooms from:', url);
+      console.log('Fetching rooms from:', url);
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: buildHeaders(true),
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: buildHeaders(true),
+      });
+
+      // Handle empty responses gracefully for GET requests
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return [];
+      }
+
+      // Normalize all possible backend formats to a RoomData[]
+      const data = await handleResponse<any>(response, 'Failed to fetch rooms');
+
+      if (Array.isArray(data)) return data as RoomData[];
+      if (Array.isArray(data?.response)) return data.response as RoomData[]; // { status, response }
+      if (Array.isArray(data?.data)) return data.data as RoomData[];         // { success, data }
+
+      return [] as RoomData[];
     });
-
-    // Handle empty responses gracefully for GET requests
-    if (response.status === 204 || response.headers.get('content-length') === '0') {
-      return [];
-    }
-
-    // Normalize all possible backend formats to a RoomData[]
-    const data = await handleResponse<any>(response, 'Failed to fetch rooms');
-
-    if (Array.isArray(data)) return data as RoomData[];
-    if (Array.isArray(data?.response)) return data.response as RoomData[]; // { status, response }
-    if (Array.isArray(data?.data)) return data.data as RoomData[];         // { success, data }
-
-    return [] as RoomData[];
   },
 
   // Create Guest (requires login)
@@ -832,6 +848,9 @@ export const adminApi = {
       const result = await handleResponse<CreateGuestResponse>(response, 'Create guest failed');
       console.log('Create guest response:', result);
 
+      // Invalidate guest cache
+      dataCache.clear('guests');
+
       return result;
     } catch (error) {
       console.error('Create guest API error:', error);
@@ -841,28 +860,32 @@ export const adminApi = {
 
   // Get All Guests (requires login)
   async getAllGuests(hotel_id?: string | number): Promise<GetAllGuestsResponse | GuestData[]> {
-    const url = hotel_id
-      ? `${API_BASE_URL}/api/guests?hotel_id=${encodeURIComponent(String(hotel_id))}`
-      : `${API_BASE_URL}/api/guests`;
-    console.log('Fetching guests from:', url);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: buildHeaders(true),
+    const cacheKey = `guests_${hotel_id || 'all'}`;
+    
+    return dataCache.get(cacheKey, async () => {
+      const url = hotel_id
+        ? `${API_BASE_URL}/api/guests?hotel_id=${encodeURIComponent(String(hotel_id))}`
+        : `${API_BASE_URL}/api/guests`;
+      console.log('Fetching guests from:', url);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: buildHeaders(true),
+      });
+
+      // Handle empty responses gracefully for GET requests
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return [];
+      }
+
+      // Handle both response formats: wrapped response or direct array
+      const data = await handleResponse<any>(response, 'Failed to fetch guests');
+      // If the response is already an array, return it directly
+      if (Array.isArray(data)) {
+        return data;
+      }
+      // Otherwise, return the wrapped response format
+      return data as GetAllGuestsResponse;
     });
-
-    // Handle empty responses gracefully for GET requests
-    if (response.status === 204 || response.headers.get('content-length') === '0') {
-      return [];
-    }
-
-    // Handle both response formats: wrapped response or direct array
-    const data = await handleResponse<any>(response, 'Failed to fetch guests');
-    // If the response is already an array, return it directly
-    if (Array.isArray(data)) {
-      return data;
-    }
-    // Otherwise, return the wrapped response format
-    return data as GetAllGuestsResponse;
   },
 
   // Get Guest by ID
@@ -894,6 +917,33 @@ export const adminApi = {
     } catch (error) {
       console.error('Send notification API error:', error);
       throw error;
+    }
+  },
+
+  // Get all notifications for a specific hotel
+  async getHotelNotifications(hotelId: string | number): Promise<HotelNotificationsResponse> {
+    const url = `${API_BASE_URL}/api/hotels/${hotelId}/notifications`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: buildHeaders(true),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to fetch hotel notifications');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching hotel notifications:', error);
+      return {
+        success: false,
+        count: 0,
+        data: [],
+        error: error instanceof Error ? error.message : 'Failed to fetch notifications'
+      };
     }
   },
 
@@ -993,27 +1043,56 @@ export const adminApi = {
         is_checked_in: payload.is_checked_in ?? false,
       }),
     });
-    return handleResponse(response, 'Failed to create reservation');
+    
+    const result = await handleResponse<{
+      reservation_id: number;
+      guest_id: number;
+      room_id: number;
+      check_in_time: string;
+      check_out_time: string;
+      is_checked_in: boolean;
+    }>(response, 'Failed to create reservation');
+    
+    // Invalidate reservation cache
+    dataCache.clear('reservations');
+    
+    return result;
   },
 
   // Get All Reservations
   async getAllReservations(hotel_id?: string | number): Promise<any[]> {
-    const url = hotel_id
-      ? `${API_BASE_URL}/api/reservations?hotel_id=${encodeURIComponent(String(hotel_id))}`
-      : `${API_BASE_URL}/api/reservations/`;
+    const cacheKey = `reservations_${hotel_id || 'all'}`;
     
-    console.log('Fetching reservations from:', url);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: buildHeaders(true),
-    });
+    return dataCache.get(cacheKey, async () => {
+      const url = hotel_id
+        ? `${API_BASE_URL}/api/reservations?hotel_id=${encodeURIComponent(String(hotel_id))}`
+        : `${API_BASE_URL}/api/reservations/`;
+      
+      console.log('Fetching reservations from:', url);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: buildHeaders(true),
+      });
 
-    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return [];
+      }
+
+      const data = await handleResponse<any>(response, 'Failed to fetch reservations');
+      
+      // Normalize different response formats
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (Array.isArray(data?.response)) {
+        return data.response; // Your backend format: { status, message, response: [...] }
+      }
+      if (Array.isArray(data?.data)) {
+        return data.data; // Standard format: { success, data: [...] }
+      }
+      
       return [];
-    }
-
-    const data = await handleResponse<any>(response, 'Failed to fetch reservations');
-    return Array.isArray(data) ? data : data.data || data.response || [];
+    });
   },
 
   /**

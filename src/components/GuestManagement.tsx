@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card,
   CardContent,
@@ -51,6 +51,7 @@ const GuestManagement = () => {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadingRef = useRef(false);
   const [newGuestForm, setNewGuestForm] = useState<NewGuestForm>({
     first_name: '',
     last_name: '',
@@ -120,13 +121,35 @@ const GuestManagement = () => {
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
   // Load guests from API with reservation data
-  const loadGuests = async () => {
+  const loadGuests = useCallback(async () => {
+    if (loadingRef.current) {
+      console.log('🏨 Already loading guests, skipping...');
+      return;
+    }
+    
+    loadingRef.current = true;
     setIsLoading(true);
     setError(null);
+    
     try {
       // Get selected hotel ID
       const selectedHotel = localStorage.getItem('selected_hotel');
-      const hotelId = selectedHotel ? JSON.parse(selectedHotel).hotel_id || JSON.parse(selectedHotel).id : null;
+      if (!selectedHotel) {
+        console.log('🏨 No selected hotel found');
+        setGuestList([]);
+        return;
+      }
+      
+      const hotelData = JSON.parse(selectedHotel);
+      const hotelId = hotelData.hotel_id || hotelData.id;
+      
+      if (!hotelId) {
+        console.log('🏨 No hotel ID found in selected hotel data');
+        setGuestList([]);
+        return;
+      }
+      
+      console.log('🏨 Loading guests for hotel ID:', hotelId);
       
       // Fetch reservations, guests, and rooms in parallel
       const [reservationsData, guestsData, roomsData] = await Promise.all([
@@ -135,21 +158,48 @@ const GuestManagement = () => {
         adminApi.getAllRooms(hotelId)
       ]);
 
-      const guests = Array.isArray(guestsData) ? guestsData : (guestsData as any)?.data || [];
-      const rooms = Array.isArray(roomsData) ? roomsData : (roomsData as any)?.data || [];
-      const reservations = Array.isArray(reservationsData) ? reservationsData : [];
+      // Normalize data from different response formats
+      const guests = Array.isArray(guestsData) 
+        ? guestsData 
+        : (guestsData as any)?.response || (guestsData as any)?.data || [];
+        
+      const rooms = Array.isArray(roomsData) 
+        ? roomsData 
+        : (roomsData as any)?.response || (roomsData as any)?.data || [];
+        
+      const reservations = Array.isArray(reservationsData) 
+        ? reservationsData 
+        : (reservationsData as any)?.response || (reservationsData as any)?.data || [];
+
+      console.log('🏨 Raw API responses:', {
+        guestsData,
+        roomsData,
+        reservationsData
+      });
+      
+      console.log('🏨 Normalized data:', {
+        guests: guests.length,
+        rooms: rooms.length,
+        reservations: reservations.length,
+        guestsSample: guests.slice(0, 2),
+        reservationsSample: reservations.slice(0, 2)
+      });
 
       // Create maps for quick lookup
       const guestMap = new Map();
       guests.forEach((guest: any) => {
         const guestId = guest.guest_id || guest.id;
-        guestMap.set(guestId, guest);
+        if (guestId) {
+          guestMap.set(guestId, guest);
+        }
       });
 
       const roomMap = new Map();
       rooms.forEach((room: any) => {
         const roomId = room.id || room.room_id;
-        roomMap.set(roomId, room);
+        if (roomId) {
+          roomMap.set(roomId, room);
+        }
       });
 
       // Create reservation map for quick lookup
@@ -157,22 +207,27 @@ const GuestManagement = () => {
       const seenReservations = new Set<string>();
       
       reservations.forEach((reservation: any) => {
-        const guestId = reservation.guest_id;
-        const roomId = reservation.room_id;
-        const dedupeKey = `${guestId}-${roomId}`;
+        const guestIds = Array.isArray(reservation.guest_id) ? reservation.guest_id : [reservation.guest_id];
+        const roomIds = Array.isArray(reservation.room_id) ? reservation.room_id : [reservation.room_id];
         
-        if (!seenReservations.has(dedupeKey) && guestId && guestMap.has(guestId)) {
-          seenReservations.add(dedupeKey);
-          const room = roomMap.get(roomId);
-          const roomNumber = room?.room_number || room?.roomNumber || room?.number;
+        // Handle array format from your API
+        guestIds.forEach((guestId: any, index: number) => {
+          const roomId = roomIds[index] || roomIds[0];
+          const dedupeKey = `${guestId}-${roomId}`;
           
-          reservationMap.set(guestId, {
-            room_number: roomNumber,
-            check_in_time: reservation.check_in_time || reservation.check_in,
-            check_out_time: reservation.check_out_time || reservation.check_out,
-            is_checked_in: reservation.is_checked_in || false,
-          });
-        }
+          if (!seenReservations.has(dedupeKey) && guestId && guestMap.has(guestId)) {
+            seenReservations.add(dedupeKey);
+            const room = roomMap.get(roomId);
+            const roomNumber = room?.room_number || room?.roomNumber || room?.number;
+            
+            reservationMap.set(guestId, {
+              room_number: roomNumber,
+              check_in_time: reservation.check_in_time || reservation.check_in,
+              check_out_time: reservation.check_out_time || reservation.check_out,
+              is_checked_in: reservation.is_checked_in || false,
+            });
+          }
+        });
       });
 
       // Transform guests with reservation data
@@ -182,7 +237,7 @@ const GuestManagement = () => {
         const reservationData = reservationMap.get(guestId);
         
         return {
-          id: guestId || `${g?.email || ''}`,
+          id: String(guestId || Date.now() + Math.random()),
           name: guestName || 'Guest',
           email: g?.email || '-',
           phone: g?.phone || '-',
@@ -195,20 +250,42 @@ const GuestManagement = () => {
           lastActivity: g?.lastActivity || 'Just now',
         } as Guest;
       });
-        
-      setGuestList(transformedGuests);
+      
+      console.log('🏨 Transformed guests:', transformedGuests);
+      
+      if (transformedGuests.length > 0) {
+        setGuestList(transformedGuests);
+        console.log('🏨 Guest list updated with', transformedGuests.length, 'guests');
+      } else {
+        console.log('🏨 No guests to display');
+        setGuestList([]);
+      }
+      
     } catch (err) {
-      console.error('Error loading guests:', err);
+      console.error('🏨 Error loading guests:', err);
       setError('Failed to load guests.');
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
-  };
+  }, []);
   
 
   // Load guests on component mount
   useEffect(() => {
-    loadGuests();
+    let isMounted = true;
+    
+    const loadData = async () => {
+      if (isMounted) {
+        await loadGuests();
+      }
+    };
+    
+    loadData();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Status badge
@@ -301,7 +378,7 @@ const getStatusBadge = (status: string) => {
         ]);
       }
       // Reload guests from API (to ensure sync with backend)
-      await loadGuests();
+      setTimeout(() => loadGuests(), 100);
       resetForm();
       
       // Show success message
