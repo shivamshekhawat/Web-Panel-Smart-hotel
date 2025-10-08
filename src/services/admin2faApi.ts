@@ -16,7 +16,7 @@ export interface VerifyOtpResponse {
 
 export const admin2faApi = {
   async sendOtp(username: string, password: string): Promise<SendOtpResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/admin/auth/send-otp`, {
+    const response = await fetch(`${API_BASE_URL}/api/admin/auth/send-otp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -34,7 +34,7 @@ export const admin2faApi = {
   },
 
   async verifyOtp(otp: string, tempToken: string): Promise<VerifyOtpResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/admin/auth/verify-otp`, {
+    const response = await fetch(`${API_BASE_URL}/api/admin/auth/verify-otp`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
